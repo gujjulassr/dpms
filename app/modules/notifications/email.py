@@ -34,16 +34,27 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM     = os.getenv("SMTP_FROM", SMTP_USER)
 
 
+def _smtp_settings() -> tuple[str, int, str, str, str]:
+    """Read SMTP settings at call time to avoid stale import-time env values."""
+    host = os.getenv("SMTP_HOST", "")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    from_addr = os.getenv("SMTP_FROM", user)
+    return host, port, user, password, from_addr
+
+
 def _build_message(
     to: str,
     subject: str,
     html_body: str,
+    from_addr: str,
     ics_content: Optional[str] = None,
     ics_filename: str = "appointment.ics",
 ) -> MIMEMultipart:
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
+    msg["From"] = from_addr
     msg["To"] = to
 
     alt = MIMEMultipart("alternative")
@@ -87,24 +98,27 @@ def send_email(
     Returns True on success, False if SMTP not configured or on error.
     Never raises — caller should not be affected by email failures.
     """
-    if not SMTP_HOST or not SMTP_USER or not to:
+    smtp_host, smtp_port, smtp_user, smtp_password, smtp_from = _smtp_settings()
+
+    if not smtp_host or not smtp_user or not to:
         return False
 
-    envelope_from = parseaddr(SMTP_FROM)[1] or SMTP_USER
+    envelope_from = parseaddr(smtp_from)[1] or smtp_user
 
     try:
         msg = _build_message(
             to=to,
             subject=subject,
             html_body=html_body,
+            from_addr=smtp_from,
             ics_content=ics_content,
             ics_filename=ics_filename,
         )
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
             server.ehlo()
             server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(smtp_user, smtp_password)
             server.sendmail(envelope_from, [to], msg.as_string())
 
         log.info("Email sent → %s  [%s]", to, subject)
@@ -126,11 +140,12 @@ def send_email(
                 to=to,
                 subject=subject,
                 html_body=html_body,
+                from_addr=smtp_from,
             )
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                 server.ehlo()
                 server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.login(smtp_user, smtp_password)
                 server.sendmail(envelope_from, [to], msg.as_string())
 
             log.info("Email sent without calendar invite → %s  [%s]", to, subject)

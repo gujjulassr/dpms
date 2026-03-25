@@ -169,6 +169,30 @@ def get_upcoming_active_appointments(
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
+def get_active_appointment_by_patient_and_doctor(
+    db: Session,
+    patient_id: UUID,
+    doctor_id: UUID,
+) -> Optional[Dict]:
+    result = db.execute(
+        text(
+            f"{APPOINTMENT_SELECT} "
+            "WHERE a.patient_id = :patient_id "
+            "AND a.doctor_id = :doctor_id "
+            "AND a.status = 'CONFIRMED' "
+            "AND (s.slot_date > CURRENT_DATE OR (s.slot_date = CURRENT_DATE AND s.start_time >= CURRENT_TIME)) "
+            "ORDER BY s.slot_date, s.start_time "
+            "LIMIT 1"
+        ),
+        {
+            "patient_id": str(patient_id),
+            "doctor_id": str(doctor_id),
+        },
+    )
+    row = result.mappings().first()
+    return _serialize_row(row) if row else None
+
+
 def get_patient_by_id(db: Session, patient_id: UUID) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM patients WHERE patient_id = :patient_id"),

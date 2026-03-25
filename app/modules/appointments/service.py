@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.appointments.repository import (
     create_appointment,
     create_cancellation_log,
+    get_active_appointment_by_patient_and_doctor,
     get_active_appointments_by_date,
     get_available_slots_by_doctor_and_date,
     get_earliest_available_slot_by_doctor,
@@ -51,6 +52,14 @@ def create_appointment_service(db: Session, payload: AppointmentCreate) -> Dict:
     existing = get_appointment_by_slot_id(db, payload.slot_id)
     if existing and existing["status"] != "CANCELLED":
         raise ValueError("This slot is already booked")
+
+    active_with_same_doctor = get_active_appointment_by_patient_and_doctor(
+        db,
+        payload.patient_id,
+        payload.doctor_id,
+    )
+    if active_with_same_doctor:
+        raise ValueError("Patient already has an active appointment with this doctor")
 
     try:
         appointment = create_appointment(

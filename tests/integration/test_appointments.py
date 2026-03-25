@@ -110,6 +110,23 @@ def future_slot(db, doctor, session_row):
 
 
 @pytest.fixture()
+def another_future_slot(db, doctor, session_row):
+    result = db.execute(
+        text("""
+            INSERT INTO slots (doctor_id, session_id, slot_date, start_time, end_time, status)
+            VALUES (:doctor_id, :session_id, :slot_date, '10:30', '10:45', 'AVAILABLE')
+            RETURNING slot_id
+        """),
+        {
+            "doctor_id": str(doctor["doctor_id"]),
+            "session_id": session_row["session_id"],
+            "slot_date": date.today() + timedelta(days=5),
+        },
+    )
+    return {"slot_id": result.scalar_one()}
+
+
+@pytest.fixture()
 def imminent_slot(db, doctor, session_row):
     """Slot starting in 30 minutes — cancellation should be blocked."""
     now = datetime.utcnow()
@@ -241,6 +258,33 @@ class TestCreateAppointment:
                 AppointmentCreate(
                     slot_id=available_slot["slot_id"],
                     patient_id=patient2,
+                    doctor_id=doctor["doctor_id"],
+                ),
+            )
+
+    def test_same_patient_cannot_book_multiple_active_with_same_doctor(
+        self,
+        db,
+        patient,
+        doctor,
+        future_slot,
+        another_future_slot,
+    ):
+        create_appointment_service(
+            db,
+            AppointmentCreate(
+                slot_id=future_slot["slot_id"],
+                patient_id=patient["patient_id"],
+                doctor_id=doctor["doctor_id"],
+            ),
+        )
+
+        with pytest.raises(ValueError, match="active appointment with this doctor"):
+            create_appointment_service(
+                db,
+                AppointmentCreate(
+                    slot_id=another_future_slot["slot_id"],
+                    patient_id=patient["patient_id"],
                     doctor_id=doctor["doctor_id"],
                 ),
             )

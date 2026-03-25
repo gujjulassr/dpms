@@ -9,6 +9,8 @@ from app.modules.appointments.repository import (
     create_appointment,
     create_cancellation_log,
     get_active_appointments_by_date,
+    get_available_slots_by_doctor_and_date,
+    get_earliest_available_slot_by_doctor,
     get_appointment_by_id,
     get_appointment_by_slot_id,
     get_appointments_by_date,
@@ -95,12 +97,49 @@ def get_appointments_by_date_service(db: Session, appointment_date) -> List[Dict
     return get_appointments_by_date(db, appointment_date)
 
 
-def get_active_appointments_by_date_service(db: Session, appointment_date) -> List[Dict]:
-    return get_active_appointments_by_date(db, appointment_date)
+def get_active_appointments_by_date_service(
+    db: Session, appointment_date, patient_id: Optional[UUID] = None
+) -> List[Dict]:
+    return get_active_appointments_by_date(db, appointment_date, patient_id)
 
 
-def get_upcoming_active_appointments_service(db: Session) -> List[Dict]:
-    return get_upcoming_active_appointments(db)
+def get_upcoming_active_appointments_service(
+    db: Session, patient_id: Optional[UUID] = None
+) -> List[Dict]:
+    return get_upcoming_active_appointments(db, patient_id)
+
+
+def get_available_slots_by_doctor_and_date_service(
+    db: Session,
+    doctor_id: UUID,
+    slot_date: date_type,
+) -> List[Dict]:
+    doctor = get_doctor_by_id(db, doctor_id)
+    if not doctor:
+        raise LookupError("Doctor not found")
+
+    return get_available_slots_by_doctor_and_date(db, doctor_id, slot_date)
+
+
+def get_earliest_available_slot_by_doctor_service(
+    db: Session,
+    doctor_id: UUID,
+    start_date: Optional[date_type] = None,
+) -> Dict:
+    doctor = get_doctor_by_id(db, doctor_id)
+    if not doctor:
+        raise LookupError("Doctor not found")
+
+    search_date = start_date or date_type.today()
+    search_time = datetime.now().time() if search_date == date_type.today() else time_type(0, 0)
+
+    slot = get_earliest_available_slot_by_doctor(db, doctor_id, search_date, search_time)
+    if not slot:
+        raise LookupError(
+            f"No available future slots found for {doctor['full_name']} from {search_date} onward."
+        )
+
+    return slot
 
 
 def update_appointment_service(db: Session, appointment_id: UUID, payload: AppointmentUpdate) -> Dict:
@@ -231,7 +270,7 @@ def suggest_available_slot_service(
     slots = get_slots_by_doctor_and_date(db, doctor_id, slot_date)
     if not slots:
         raise LookupError(
-            f"No sessions scheduled for Dr. {doctor['full_name']} on {slot_date}. "
+            f"No sessions scheduled for {doctor['full_name']} on {slot_date}. "
             "Please check another date."
         )
 

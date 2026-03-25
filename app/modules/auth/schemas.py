@@ -26,6 +26,13 @@ class UserCreate(BaseModel):
     doctor_id:  Optional[str] = None
 
 
+class GoogleRegisterRequest(BaseModel):
+    """Sent from Streamlit registration form after first Google login."""
+    reg_token:    str            # signed temp JWT from the callback redirect
+    phone:        str            # collected from the form, must be ≤15 chars
+    date_of_birth: Optional[str] = None   # YYYY-MM-DD, optional
+
+
 class UserInfo(BaseModel):
     user_id:      str
     username:     str

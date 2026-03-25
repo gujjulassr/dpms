@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.patients.repository import (
     create_patient,
+    delete_patient,
     get_patient_by_id,
     get_patient_by_email,
     get_patient_by_phone,
@@ -66,6 +67,22 @@ def get_patient_by_email_service(db: Session, email: str) -> Dict:
 def list_patients_service(db: Session) -> List[Dict]:
     patients = list_patients(db)
     return patients
+
+
+def delete_patient_service(db: Session, patient_id: UUID) -> dict:
+    """Permanently delete a patient and their linked user account."""
+    existing = get_patient_by_id(db, patient_id)
+    if not existing:
+        raise LookupError("Patient not found")
+    try:
+        deleted = delete_patient(db, patient_id)
+        db.commit()
+        if not deleted:
+            raise LookupError("Patient not found")
+        return {"deleted": True, "patient_id": str(patient_id), "full_name": existing["full_name"]}
+    except Exception as e:
+        db.rollback()
+        raise e
 
 
 def update_patient_service(db: Session, patient_id: UUID, payload: PatientUpdate) -> Dict:

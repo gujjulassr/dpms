@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.modules.patients.schemas import PatientCreate, PatientUpdate
 from app.modules.patients.service import (
     create_patient_service,
+    delete_patient_service,
     get_patient_by_email_service,
     get_patient_by_name_service,
     get_patient_service,
@@ -108,6 +109,24 @@ SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_patient",
+            "description": (
+                "Permanently delete a patient record and their linked user account from the system. "
+                "Use this when an admin explicitly asks to remove, delete, or permanently erase a patient. "
+                "This action is irreversible. Always look up the patient first to confirm identity before deleting."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patient_id": {"type": "string", "description": "Patient UUID"},
+                },
+                "required": ["patient_id"],
+            },
+        },
+    },
 ]
 
 
@@ -139,3 +158,6 @@ def execute(name: str, args: dict, db: Session):
         if args.get("phone") is not None:         fields["phone"]         = args["phone"]
         if args.get("date_of_birth") is not None: fields["date_of_birth"] = args["date_of_birth"]
         return update_patient_service(db, UUID(args["patient_id"]), PatientUpdate(**fields))
+
+    if name == "delete_patient":
+        return delete_patient_service(db, UUID(args["patient_id"]))

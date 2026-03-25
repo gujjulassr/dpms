@@ -32,6 +32,7 @@ from app.conversations.service import (
     save_assistant_message,
     save_user_message,
 )
+from app.modules.auth.repository import get_user_by_id
 from app.modules.doctors.service import get_doctors_by_name_service
 from app.modules.sessions.service import get_sessions_by_doctor_service
 
@@ -115,9 +116,105 @@ def _system_prompt(role: str) -> str:
         "       - The earliest available slot found (suggested) as a direct booking option.\n"
         "       Patient can choose one, both, or neither. Never auto-book or auto-waitlist.\n"
         "    e. If suggested is None → no slots available for that doctor on that date at all. Just say so.\n"
-        "14. BOOKING WITHOUT A TIME — if the patient asks for earliest available with no specific time, call suggest_available_slot without preferred_time and book the returned slot directly.\n"
-        "15. Do NOT offer waitlist for the suggested/alternative session — it already has available slots so there is nothing to wait for."
+        "14. BOOKING WITHOUT A TIME — if the patient asks for earliest available with no specific time or asks for the soonest/next/earliest appointment without a date, use get_earliest_available_slot_by_doctor.\n"
+        "15. Do NOT offer waitlist for the suggested/alternative session — it already has available slots so there is nothing to wait for.\n"
+        "16. For PATIENT users, doctor discovery is public but contact details are not. Only present doctor name and specialization to patients unless the system explicitly allows more.\n"
+        "17. If the user asks for all available slots, open slots, active slots, or free times for a doctor on a date, use get_available_slots_by_doctor_and_date. Use suggest_available_slot only for booking one requested date/time.\n"
+        "18. If the user asks whether a doctor or specialization is available today, first identify the doctor, then check sessions or available slots for today.\n"
+        "19. If the user mentions a specialist term like cardiologist, dermatologist, or pediatrician, prefer get_doctors_by_specialization over name search.\n"
+        "20. PATIENT IDENTITY RULE — when the role is PATIENT, the logged-in patient's patient_id is "
+        "automatically injected into every booking, cancellation, and lookup tool. "
+        "NEVER ask a PATIENT for their name, patient ID, date of birth, or phone number to identify themselves. "
+        "Just proceed directly — their identity is already known. "
+        "If a tool returns 'provide a valid patient_id', the system will supply it; do not ask the user.\n"
+        "21. When a PATIENT asks to book and no session exists on the requested date, do NOT say 'no sessions scheduled'. "
+        "Instead, immediately call get_earliest_available_slot_by_doctor to find the next available date and offer it.\n"
+        "22. ADMIN DELETE RULE — when an ADMIN says 'remove', 'delete', 'erase', or 'permanently remove' a patient, "
+        "ALWAYS use the delete_patient tool. NEVER rename, anonymize, or set the name to '[REDACTED]'. "
+        "First look up the patient by name or ID to confirm, then call delete_patient with their patient_id. "
+        "Update/rename is ONLY for legitimate data corrections — never for deletion requests.\n"
     )
+
+
+DOCTOR_DISCOVERY_TOOLS = {
+    "list_doctors",
+    "get_doctor_by_id",
+    "get_doctor_by_email",
+    "get_doctors_by_name",
+    "get_doctors_by_specialization",
+}
+
+
+def _sanitize_doctor_record_for_patient(record: dict) -> dict:
+    allowed = {}
+
+    if "doctor_id" in record:
+        allowed["doctor_id"] = record["doctor_id"]
+    if "full_name" in record:
+        allowed["full_name"] = record["full_name"]
+    if "specialization" in record:
+        allowed["specialization"] = record["specialization"]
+    if "slot_duration_mins" in record:
+        allowed["slot_duration_mins"] = record["slot_duration_mins"]
+    if "max_patients_per_day" in record:
+        allowed["max_patients_per_day"] = record["max_patients_per_day"]
+    if "is_active" in record:
+        allowed["is_active"] = record["is_active"]
+
+    return allowed
+
+
+def _sanitize_tool_result_for_role(role: str, action_name: str, tool_result):
+    if role != "PATIENT":
+        return tool_result
+
+    if action_name not in DOCTOR_DISCOVERY_TOOLS:
+        return tool_result
+
+    if isinstance(tool_result, list):
+        return [_sanitize_doctor_record_for_patient(item) for item in tool_result]
+
+    if isinstance(tool_result, dict):
+        return _sanitize_doctor_record_for_patient(tool_result)
+
+    return tool_result
+
+
+def _get_authenticated_user(db: Session, user_id: str) -> Optional[dict]:
+    if not user_id:
+        return None
+    return get_user_by_id(db, user_id)
+
+
+def _inject_role_scoped_ids(role: str, action_name: str, action_args: dict, auth_user: Optional[dict]) -> dict:
+    if not auth_user:
+        return action_args
+
+    scoped_args = dict(action_args)
+
+    if role == "PATIENT":
+        patient_id = auth_user.get("patient_id")
+        # Inject patient_id for every tool a patient uses that touches their own data
+        PATIENT_SCOPED_TOOLS = {
+            "create_appointment",
+            "cancel_appointment",
+            "get_appointments_by_patient",
+            "get_appointment_by_id",
+            "get_upcoming_active_appointments",
+            "get_active_appointments_today",
+            "join_waitlist",
+            "leave_waitlist",
+            "get_waitlist_by_patient",
+        }
+        if patient_id and action_name in PATIENT_SCOPED_TOOLS:
+            scoped_args["patient_id"] = str(patient_id)
+
+    if role == "DOCTOR":
+        doctor_id = auth_user.get("doctor_id")
+        if doctor_id and action_name in {"get_appointments_by_doctor", "get_sessions_by_doctor"}:
+            scoped_args["doctor_id"] = str(doctor_id)
+
+    return scoped_args
 
 
 def _extract_doctor_name_query(message: str) -> Optional[str]:
@@ -204,6 +301,16 @@ def process_agent_chat(db: Session, payload: AgentChatRequest) -> AgentChatRespo
     session_id = _session_id(payload)
     last_tool_name: Optional[str] = None
     last_tool_result = None
+    auth_user = _get_authenticated_user(db, payload.user_id)
+
+    # Guard: PATIENT must have a valid linked patient record
+    if payload.role == "PATIENT":
+        if not auth_user:
+            msg = "Your session has expired or your account was not found. Please log out and sign in again."
+            return AgentChatResponse(role=payload.role, message=msg, allowed=False, tool_name=None, data=None)
+        if not auth_user.get("patient_id"):
+            msg = "Your patient profile is not set up yet. Please sign out and sign back in with Google to complete your registration."
+            return AgentChatResponse(role=payload.role, message=msg, allowed=False, tool_name=None, data=None)
 
     try:
         get_or_create_conversation(session_id, payload.user_id, payload.role)
@@ -273,6 +380,7 @@ def process_agent_chat(db: Session, payload: AgentChatRequest) -> AgentChatRespo
             for tc in choice.message.tool_calls:
                 action_name = tc.function.name
                 action_args = json.loads(tc.function.arguments)
+                action_args = _inject_role_scoped_ids(payload.role, action_name, action_args, auth_user)
 
                 if not is_action_allowed(payload.role, action_name):
                     msg = (
@@ -288,14 +396,18 @@ def process_agent_chat(db: Session, payload: AgentChatRequest) -> AgentChatRespo
                         data=None,
                     )
 
-                tool_result = _run_tool(action_name, action_args, db)
+                try:
+                    tool_result = _run_tool(action_name, action_args, db)
+                except Exception as tool_exc:
+                    tool_result = {"error": str(tool_exc)}
+                visible_tool_result = _sanitize_tool_result_for_role(payload.role, action_name, tool_result)
                 last_tool_name = action_name
-                last_tool_result = tool_result
+                last_tool_result = visible_tool_result
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(tool_result, default=str),
+                    "content": json.dumps(visible_tool_result, default=str),
                 })
 
         fallback = "I completed the available steps but couldn't fully finish the request."

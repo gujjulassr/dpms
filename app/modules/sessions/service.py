@@ -1,4 +1,4 @@
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List
 from uuid import UUID
 
@@ -107,6 +107,97 @@ def create_session_service(db: Session, payload: SessionCreate) -> Dict:
             "session": session,
             "slots_generated": len(slots),
             "slots": slots,
+        }
+    except Exception as e:
+        db.rollback()
+        raise e
+
+
+def create_doctor_availability_range_service(
+    db: Session,
+    *,
+    doctor_id: UUID,
+    start_date: date,
+    days: int,
+    include_morning: bool = True,
+    include_afternoon: bool = True,
+) -> Dict:
+    doctor = get_doctor_by_id(db, doctor_id)
+    if not doctor:
+        raise LookupError("Doctor not found")
+
+    if not doctor["is_active"]:
+        raise ValueError("Cannot create availability for an inactive doctor")
+
+    if days <= 0:
+        raise ValueError("Days must be greater than 0")
+
+    if not include_morning and not include_afternoon:
+        raise ValueError("At least one session range must be selected")
+
+    session_templates = []
+    if include_morning:
+        session_templates.append(("MORNING", time(9, 0), time(13, 0)))
+    if include_afternoon:
+        session_templates.append(("AFTERNOON", time(14, 0), time(17, 0)))
+
+    created_sessions = []
+    skipped_existing = []
+
+    try:
+        for offset in range(days):
+            session_date = start_date + timedelta(days=offset)
+
+            for session_name, start_time, end_time in session_templates:
+                existing = get_session_by_unique_key(db, doctor_id, session_date, session_name)
+                if existing:
+                    skipped_existing.append(existing)
+                    continue
+
+                session = create_session(
+                    db,
+                    {
+                        "doctor_id": str(doctor_id),
+                        "session_date": session_date,
+                        "session_name": session_name,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "status": "OPEN",
+                    },
+                )
+
+                slots = _generate_slots(
+                    db,
+                    doctor_id=doctor_id,
+                    session_id=session["session_id"],
+                    session_date=session_date,
+                    start_time=start_time,
+                    end_time=end_time,
+                    slot_duration_mins=int(doctor["slot_duration_mins"]),
+                )
+
+                created_sessions.append(
+                    {
+                        "session_id": session["session_id"],
+                        "session_date": session["session_date"],
+                        "session_name": session["session_name"],
+                        "start_time": session["start_time"],
+                        "end_time": session["end_time"],
+                        "slots_generated": len(slots),
+                    }
+                )
+
+        db.commit()
+        return {
+            "doctor_id": str(doctor_id),
+            "doctor_name": doctor["full_name"],
+            "specialization": doctor["specialization"],
+            "start_date": start_date.isoformat(),
+            "days_requested": days,
+            "days_covered_until": (start_date + timedelta(days=days - 1)).isoformat(),
+            "sessions_created": len(created_sessions),
+            "sessions_skipped_existing": len(skipped_existing),
+            "created_sessions": created_sessions,
         }
     except Exception as e:
         db.rollback()

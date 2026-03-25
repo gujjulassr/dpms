@@ -16,6 +16,8 @@ from app.modules.appointments.service import (
     cancel_appointment_service,
     create_appointment_service,
     get_active_appointments_by_date_service,
+    get_available_slots_by_doctor_and_date_service,
+    get_earliest_available_slot_by_doctor_service,
     get_appointment_service,
     get_appointments_by_date_service,
     get_appointments_by_doctor_service,
@@ -133,12 +135,52 @@ SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_available_slots_by_doctor_and_date",
+            "description": (
+                "List all currently available slots for a given doctor on a specific date. "
+                "Use this when the user asks for available slots, open slots, active slots, or free times."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "slot_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
+                },
+                "required": ["doctor_id", "slot_date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_earliest_available_slot_by_doctor",
+            "description": (
+                "Find the earliest future available slot for a given doctor from a start date onward. "
+                "Use this when the user asks for the earliest appointment, next available appointment, or soonest slot."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start searching from this date in YYYY-MM-DD format (optional). Defaults to today.",
+                    },
+                },
+                "required": ["doctor_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "suggest_available_slot",
             "description": (
                 "Find an available slot for a doctor on a given date using binary search. "
                 "If preferred_time (HH:MM) is given, checks that exact slot first — if taken, "
                 "returns the next available slot automatically. "
-                "Always call this before create_appointment when booking by doctor name and time."
+                "Always call this before create_appointment when booking by doctor name and time. "
+                "Do not use this to answer questions asking for all available slots or earliest future appointments."
             ),
             "parameters": {
                 "type": "object",
@@ -223,13 +265,30 @@ def execute(name: str, args: dict, db: Session):
         return get_appointments_by_status_service(db, args["status"].upper())
 
     if name == "get_upcoming_active_appointments":
-        return get_upcoming_active_appointments_service(db)
+        pid = _as_uuid(args["patient_id"], "patient_id") if args.get("patient_id") else None
+        return get_upcoming_active_appointments_service(db, pid)
 
     if name == "get_active_appointments_today":
-        return get_active_appointments_by_date_service(db, date.today())
+        pid = _as_uuid(args["patient_id"], "patient_id") if args.get("patient_id") else None
+        return get_active_appointments_by_date_service(db, date.today(), pid)
 
     if name == "get_appointments_by_date":
         return get_appointments_by_date_service(db, date.fromisoformat(args["appointment_date"]))
+
+    if name == "get_available_slots_by_doctor_and_date":
+        return get_available_slots_by_doctor_and_date_service(
+            db,
+            _as_uuid(args["doctor_id"], "doctor_id"),
+            date.fromisoformat(args["slot_date"]),
+        )
+
+    if name == "get_earliest_available_slot_by_doctor":
+        start_date = date.fromisoformat(args["start_date"]) if args.get("start_date") else None
+        return get_earliest_available_slot_by_doctor_service(
+            db,
+            _as_uuid(args["doctor_id"], "doctor_id"),
+            start_date,
+        )
 
     if name == "suggest_available_slot":
         return suggest_available_slot_service(

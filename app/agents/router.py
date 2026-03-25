@@ -12,19 +12,16 @@ from app.modules.auth.service import decode_token
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
 
-def _extract_role_from_token(request: Request) -> Optional[str]:
+def _extract_token_payload(request: Request) -> Optional[dict]:
     """
-    Optionally pull role from Bearer token.
-    Returns None if no token or token is invalid — caller falls back to payload.role.
+    Optionally pull decoded JWT payload from Bearer token.
+    Returns None if no token or token is invalid.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ", 1)[1]
-    payload = decode_token(token)
-    if not payload:
-        return None
-    return payload.get("role")
+    return decode_token(token)
 
 
 @router.post(
@@ -38,12 +35,15 @@ def agent_chat_endpoint(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    # If a valid JWT is present, its role takes precedence over the body role.
-    # This ensures a patient cannot escalate their own role by editing the request.
-    token_role = _extract_role_from_token(request)
-    if token_role:
-        # Override payload role with the one from the verified token
-        payload = payload.model_copy(update={"role": token_role})
+    # If a valid JWT is present, trusted token identity takes precedence over body values.
+    token_payload = _extract_token_payload(request)
+    if token_payload:
+        payload = payload.model_copy(
+            update={
+                "role": token_payload.get("role", payload.role),
+                "user_id": token_payload.get("user_id", payload.user_id),
+            }
+        )
 
     try:
         return process_agent_chat(db, payload)

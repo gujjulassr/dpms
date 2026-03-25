@@ -128,28 +128,43 @@ def get_appointments_by_date(db: Session, appointment_date: date) -> List[Dict]:
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def get_active_appointments_by_date(db: Session, appointment_date: date) -> List[Dict]:
+def get_active_appointments_by_date(
+    db: Session, appointment_date: date, patient_id: Optional[UUID] = None
+) -> List[Dict]:
+    extra = " AND a.patient_id = :patient_id" if patient_id else ""
+    params: dict = {"appointment_date": appointment_date}
+    if patient_id:
+        params["patient_id"] = str(patient_id)
     result = db.execute(
         text(
             f"{APPOINTMENT_SELECT} "
             "WHERE s.slot_date = :appointment_date "
             "AND a.status = 'CONFIRMED' "
             "AND (s.slot_date > CURRENT_DATE OR (s.slot_date = CURRENT_DATE AND s.start_time >= CURRENT_TIME)) "
+            f"{extra} "
             "ORDER BY s.start_time"
         ),
-        {"appointment_date": appointment_date},
+        params,
     )
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def get_upcoming_active_appointments(db: Session) -> List[Dict]:
+def get_upcoming_active_appointments(
+    db: Session, patient_id: Optional[UUID] = None
+) -> List[Dict]:
+    extra = " AND a.patient_id = :patient_id" if patient_id else ""
+    params: dict = {}
+    if patient_id:
+        params["patient_id"] = str(patient_id)
     result = db.execute(
         text(
             f"{APPOINTMENT_SELECT} "
             "WHERE a.status = 'CONFIRMED' "
             "AND (s.slot_date > CURRENT_DATE OR (s.slot_date = CURRENT_DATE AND s.start_time >= CURRENT_TIME)) "
+            f"{extra} "
             "ORDER BY s.slot_date, s.start_time"
-        )
+        ),
+        params,
     )
     return [_serialize_row(row) for row in result.mappings().all()]
 
@@ -212,6 +227,62 @@ def get_slots_by_doctor_and_date(db: Session, doctor_id: UUID, slot_date: date) 
         {"doctor_id": str(doctor_id), "slot_date": slot_date},
     )
     return [_serialize_row(row) for row in result.mappings().all()]
+
+
+def get_available_slots_by_doctor_and_date(db: Session, doctor_id: UUID, slot_date: date) -> List[Dict]:
+    result = db.execute(
+        text("""
+            SELECT
+                sl.*,
+                se.session_name,
+                d.full_name AS doctor_name,
+                d.specialization AS doctor_specialization
+            FROM slots sl
+            JOIN sessions se ON se.session_id = sl.session_id
+            JOIN doctors d ON d.doctor_id = sl.doctor_id
+            WHERE sl.doctor_id = :doctor_id
+              AND sl.slot_date = :slot_date
+              AND sl.status = 'AVAILABLE'
+            ORDER BY sl.start_time
+        """),
+        {"doctor_id": str(doctor_id), "slot_date": slot_date},
+    )
+    return [_serialize_row(row) for row in result.mappings().all()]
+
+
+def get_earliest_available_slot_by_doctor(
+    db: Session,
+    doctor_id: UUID,
+    start_date: date,
+    start_time: time,
+) -> Optional[Dict]:
+    result = db.execute(
+        text("""
+            SELECT
+                sl.*,
+                se.session_name,
+                d.full_name AS doctor_name,
+                d.specialization AS doctor_specialization
+            FROM slots sl
+            JOIN sessions se ON se.session_id = sl.session_id
+            JOIN doctors d ON d.doctor_id = sl.doctor_id
+            WHERE sl.doctor_id = :doctor_id
+              AND sl.status = 'AVAILABLE'
+              AND (
+                    sl.slot_date > :start_date
+                    OR (sl.slot_date = :start_date AND sl.start_time >= :start_time)
+              )
+            ORDER BY sl.slot_date, sl.start_time
+            LIMIT 1
+        """),
+        {
+            "doctor_id": str(doctor_id),
+            "start_date": start_date,
+            "start_time": start_time,
+        },
+    )
+    row = result.mappings().first()
+    return _serialize_row(row) if row else None
 
 
 def create_cancellation_log(db: Session, data: dict) -> dict:

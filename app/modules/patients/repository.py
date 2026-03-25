@@ -121,6 +121,20 @@ def get_patients_by_name(db:Session,name:str)->List[Dict]:
 
 
 
+def delete_patient(db: Session, patient_id: UUID) -> bool:
+    """Delete a patient and their linked user account (if any). Returns True if deleted."""
+    # Delete linked user account first (FK constraint)
+    db.execute(
+        text("DELETE FROM users WHERE patient_id = :pid"),
+        {"pid": str(patient_id)},
+    )
+    result = db.execute(
+        text("DELETE FROM patients WHERE patient_id = :pid RETURNING patient_id"),
+        {"pid": str(patient_id)},
+    )
+    return result.rowcount > 0
+
+
 def update_patient(db:Session,patient_id:UUID,patient_data:Dict)->Optional[Dict]:
 
     query=text(

@@ -143,6 +143,7 @@ def auto_allocate_from_waitlist(
     # Import appointment repo directly (avoids circular import with appointments/service)
     from app.modules.appointments.repository import (
         create_appointment,
+        get_slot_by_id,
         update_slot_status,
     )
 
@@ -169,5 +170,18 @@ def auto_allocate_from_waitlist(
             "emergency_verified_at": next_patient.get("emergency_verified_at"),
         },
     )
+
+    # Send waitlist-allocated notification email (best-effort)
+    try:
+        from app.modules.notifications.service import notify_waitlist_allocated
+        slot_data = get_slot_by_id(db, freed_slot_id)
+        patient   = get_patient_by_id(db, UUID(next_patient["patient_id"]))
+        doctor    = get_doctor_by_id(db, UUID(next_patient["doctor_id"]))
+        if slot_data and patient and doctor:
+            notify_waitlist_allocated(
+                db, patient, doctor, slot_data, next_patient["waitlist_id"]
+            )
+    except Exception:
+        pass  # never let notification failures block the allocation
 
     return True

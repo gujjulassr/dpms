@@ -21,3 +21,6 @@ streamlit
 PyJWT>=2.8.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.0.0,<5
+
+# Background scheduler (2-hour appointment reminders)
+apscheduler>=3.10.0

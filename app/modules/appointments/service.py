@@ -64,6 +64,12 @@ def create_appointment_service(db: Session, payload: AppointmentCreate) -> Dict:
         )
         update_slot_status(db, payload.slot_id, "BOOKED")
         db.commit()
+
+        # Send booking confirmation email (best-effort, never breaks the flow)
+        from app.modules.notifications.service import notify_booking_confirmed
+        notify_booking_confirmed(db, patient, doctor, slot, str(appointment["appointment_id"]))
+        db.commit()
+
         return appointment
     except Exception as e:
         db.rollback()
@@ -249,6 +255,18 @@ def cancel_appointment_service(
             pass  # waitlist module not yet available
 
         db.commit()
+
+        # Send cancellation email (best-effort)
+        from app.modules.notifications.service import notify_cancellation
+        if slot:
+            cancel_patient = get_patient_by_id(db, UUID(appointment["patient_id"]))
+            cancel_doctor  = get_doctor_by_id(db, UUID(appointment["doctor_id"]))
+            if cancel_patient and cancel_doctor:
+                notify_cancellation(
+                    db, cancel_patient, cancel_doctor, slot, str(appointment_id)
+                )
+                db.commit()
+
         return updated
     except Exception as e:
         db.rollback()

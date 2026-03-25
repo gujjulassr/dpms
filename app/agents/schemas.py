@@ -2,7 +2,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
-RoleType = Literal["ADMIN", "STAFF", "PATIENT"]
+RoleType = Literal["ADMIN", "RECEPTIONIST", "DOCTOR", "PATIENT"]
 
 
 class AgentChatRequest(BaseModel):

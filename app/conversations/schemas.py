@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 SenderType = Literal["user", "assistant"]
-RoleType = Literal["ADMIN", "STAFF", "PATIENT"]
+RoleType = Literal["ADMIN", "RECEPTIONIST", "DOCTOR", "PATIENT"]
 
 
 """

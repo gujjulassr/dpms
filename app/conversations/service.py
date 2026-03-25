@@ -41,11 +41,17 @@ def save_user_message(session_id: str, content: str) -> None:
     append_message(session_id, message)
 
 
-def save_assistant_message(session_id: str, content: str, tool_name: Optional[str] = None) -> None:
+def save_assistant_message(
+    session_id: str,
+    content: str,
+    tool_name: Optional[str] = None,
+    metadata: Optional[dict] = None,
+) -> None:
     message = ConversationMessage(
         sender="assistant",
         content=content,
         tool_name=tool_name,
+        metadata=metadata,
     )
     append_message(session_id, message)
 

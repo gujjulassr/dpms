@@ -7,7 +7,7 @@ RoleType = Literal["ADMIN", "RECEPTIONIST", "DOCTOR", "PATIENT"]
 
 class AgentChatRequest(BaseModel):
     role: RoleType
-    user_id: str
+    user_id: Any
     message: str
     session_id: Optional[str] = None
 

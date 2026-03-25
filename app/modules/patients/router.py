@@ -1,5 +1,4 @@
 from typing import List
-from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -57,7 +56,7 @@ def list_patients_endpoint(db:Session=Depends(get_db)):
     status_code=status.HTTP_200_OK,
     name="get_patient"
 )
-def get_patient_endpoint(patient_id:UUID,db:Session=Depends(get_db)):
+def get_patient_endpoint(patient_id:int,db:Session=Depends(get_db)):
     try:
         return get_patient_service(db,patient_id)
     except LookupError as e:
@@ -76,7 +75,7 @@ def get_patient_endpoint(patient_id:UUID,db:Session=Depends(get_db)):
 )
 
 def update_patient_endpoint(
-    patient_id:UUID,
+    patient_id:int,
     payload:PatientUpdate,
     db:Session=Depends(get_db)
 ):

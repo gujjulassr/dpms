@@ -7,8 +7,6 @@ Owns everything about patient chatbot tools:
 """
 
 from typing import Optional
-from uuid import UUID
-
 from sqlalchemy.orm import Session
 
 from app.modules.patients.schemas import PatientCreate, PatientUpdate
@@ -50,11 +48,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_patient_by_id",
-            "description": "Look up a single patient by their UUID.",
+            "description": "Look up a single patient by their ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
                 },
                 "required": ["patient_id"],
             },
@@ -99,7 +97,7 @@ SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id":    {"type": "string", "description": "Patient UUID (required)"},
+                    "patient_id":    {"type": "integer", "description": "Patient ID (required)"},
                     "full_name":     {"type": "string"},
                     "email":         {"type": "string"},
                     "phone":         {"type": "string"},
@@ -121,7 +119,7 @@ SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
                 },
                 "required": ["patient_id"],
             },
@@ -138,7 +136,7 @@ def execute(name: str, args: dict, db: Session):
         return get_patient_by_email_service(db, args["email"])
 
     if name == "get_patient_by_id":
-        return get_patient_service(db, UUID(args["patient_id"]))
+        return get_patient_service(db, int(args["patient_id"]))
 
     if name == "get_patients_by_name":
         return get_patient_by_name_service(db, args["full_name"])
@@ -157,7 +155,7 @@ def execute(name: str, args: dict, db: Session):
         if args.get("email") is not None:         fields["email"]         = args["email"]
         if args.get("phone") is not None:         fields["phone"]         = args["phone"]
         if args.get("date_of_birth") is not None: fields["date_of_birth"] = args["date_of_birth"]
-        return update_patient_service(db, UUID(args["patient_id"]), PatientUpdate(**fields))
+        return update_patient_service(db, int(args["patient_id"]), PatientUpdate(**fields))
 
     if name == "delete_patient":
-        return delete_patient_service(db, UUID(args["patient_id"]))
+        return delete_patient_service(db, int(args["patient_id"]))

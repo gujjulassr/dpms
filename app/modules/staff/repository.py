@@ -1,15 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
 def _serialize_value(value):
-    if isinstance(value, UUID):
-        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime)):
@@ -31,10 +28,10 @@ def create_staff(db: Session, data: dict) -> dict:
     return _serialize_row(result.mappings().one())
 
 
-def get_staff_by_id(db: Session, staff_id: UUID) -> Optional[Dict]:
+def get_staff_by_id(db: Session, staff_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM staff WHERE staff_id = :staff_id"),
-        {"staff_id": str(staff_id)}
+        {"staff_id": staff_id}
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
@@ -81,7 +78,7 @@ def list_staff(db: Session) -> List[Dict]:
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def update_staff(db: Session, staff_id: UUID, data: dict) -> Optional[Dict]:
+def update_staff(db: Session, staff_id: int, data: dict) -> Optional[Dict]:
     query = text("""
         UPDATE staff
         SET
@@ -94,6 +91,6 @@ def update_staff(db: Session, staff_id: UUID, data: dict) -> Optional[Dict]:
         WHERE staff_id = :staff_id
         RETURNING *
     """)
-    result = db.execute(query, {"staff_id": str(staff_id), **data})
+    result = db.execute(query, {"staff_id": staff_id, **data})
     row = result.mappings().first()
     return _serialize_row(row) if row else None

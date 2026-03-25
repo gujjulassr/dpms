@@ -6,9 +6,7 @@ Owns everything about appointment chatbot tools:
   execute() — dispatches tool name → appointment service call
 """
 
-from datetime import date
-from uuid import UUID
-
+from datetime import date, time
 from sqlalchemy.orm import Session
 
 from app.modules.appointments.schemas import AppointmentCreate, AppointmentUpdate
@@ -16,8 +14,8 @@ from app.modules.appointments.service import (
     cancel_appointment_service,
     create_appointment_service,
     get_active_appointments_by_date_service,
-    get_available_slots_by_doctor_and_date_service,
-    get_earliest_available_slot_by_doctor_service,
+    get_available_times_by_doctor_and_date_service,
+    get_earliest_available_time_by_doctor_service,
     get_appointment_service,
     get_appointments_by_date_service,
     get_appointments_by_doctor_service,
@@ -25,16 +23,9 @@ from app.modules.appointments.service import (
     get_appointments_by_status_service,
     get_upcoming_active_appointments_service,
     list_appointments_service,
-    suggest_available_slot_service,
+    suggest_available_time_service,
     update_appointment_service,
 )
-
-
-def _as_uuid(value: str, field_name: str) -> UUID:
-    try:
-        return UUID(value)
-    except (ValueError, TypeError, AttributeError):
-        raise ValueError(f"Please provide a valid {field_name}.")
 
 
 SCHEMAS = [
@@ -50,11 +41,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_appointment_by_id",
-            "description": "Look up a single appointment by its UUID.",
+            "description": "Look up a single appointment by its ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "appointment_id": {"type": "string", "description": "Appointment UUID"},
+                    "appointment_id": {"type": "integer", "description": "Appointment ID"},
                 },
                 "required": ["appointment_id"],
             },
@@ -64,11 +55,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_appointments_by_patient",
-            "description": "List appointments for a given patient UUID.",
+            "description": "List appointments for a given patient ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
                 },
                 "required": ["patient_id"],
             },
@@ -78,11 +69,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_appointments_by_doctor",
-            "description": "List appointments for a given doctor UUID.",
+            "description": "List appointments for a given doctor ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                 },
                 "required": ["doctor_id"],
             },
@@ -135,33 +126,33 @@ SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "get_available_slots_by_doctor_and_date",
+            "name": "get_available_times_by_doctor_and_date",
             "description": (
-                "List all currently available slots for a given doctor on a specific date. "
+                "List all currently available time slots for a given doctor on a specific date. "
                 "Use this when the user asks for available slots, open slots, active slots, or free times."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
-                    "slot_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
+                    "appointment_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
                 },
-                "required": ["doctor_id", "slot_date"],
+                "required": ["doctor_id", "appointment_date"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "get_earliest_available_slot_by_doctor",
+            "name": "get_earliest_available_time_by_doctor",
             "description": (
-                "Find the earliest future available slot for a given doctor from a start date onward. "
+                "Find the earliest future available time for a given doctor from a start date onward. "
                 "Use this when the user asks for the earliest appointment, next available appointment, or soonest slot."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                     "start_date": {
                         "type": "string",
                         "description": "Start searching from this date in YYYY-MM-DD format (optional). Defaults to today.",
@@ -174,25 +165,25 @@ SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "suggest_available_slot",
+            "name": "suggest_available_time",
             "description": (
-                "Find an available slot for a doctor on a given date using binary search. "
-                "If preferred_time (HH:MM) is given, checks that exact slot first — if taken, "
-                "returns the next available slot automatically. "
+                "Find an available time for a doctor on a given date. "
+                "If preferred_time (HH:MM) is given, checks that exact time first — if taken, "
+                "returns the next available time automatically. "
                 "Always call this before create_appointment when booking by doctor name and time. "
-                "Do not use this to answer questions asking for all available slots or earliest future appointments."
+                "Do not use this to answer questions asking for all available times or earliest future appointments."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
-                    "slot_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
+                    "appointment_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
                     "preferred_time": {
                         "type": "string",
                         "description": "Preferred start time in HH:MM format (optional)",
                     },
                 },
-                "required": ["doctor_id", "slot_date"],
+                "required": ["doctor_id", "appointment_date"],
             },
         },
     },
@@ -200,15 +191,20 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_appointment",
-            "description": "Create a confirmed appointment by booking an available slot for a patient and doctor.",
+            "description": (
+                "Create a confirmed appointment by booking an available time for a patient and doctor. "
+                "Requires session_id and start_time. Call suggest_available_time first to find the right session and time."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "slot_id": {"type": "string", "description": "Slot UUID"},
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "session_id": {"type": "integer", "description": "Session ID from suggest_available_time"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
+                    "appointment_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
+                    "start_time": {"type": "string", "description": "Start time in HH:MM format"},
                 },
-                "required": ["slot_id", "patient_id", "doctor_id"],
+                "required": ["session_id", "patient_id", "doctor_id", "appointment_date", "start_time"],
             },
         },
     },
@@ -220,7 +216,7 @@ SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "appointment_id": {"type": "string", "description": "Appointment UUID"},
+                    "appointment_id": {"type": "integer", "description": "Appointment ID"},
                     "status": {"type": "string", "description": "CONFIRMED, CANCELLED, COMPLETED, or NO_SHOW"},
                     "reminder_24hr_sent": {"type": "boolean"},
                     "reminder_2hr_sent": {"type": "boolean"},
@@ -235,11 +231,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "cancel_appointment",
-            "description": "Cancel an appointment by its UUID.",
+            "description": "Cancel an appointment by its ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "appointment_id": {"type": "string", "description": "Appointment UUID"},
+                    "appointment_id": {"type": "integer", "description": "Appointment ID"},
                 },
                 "required": ["appointment_id"],
             },
@@ -253,48 +249,48 @@ def execute(name: str, args: dict, db: Session):
         return list_appointments_service(db)
 
     if name == "get_appointment_by_id":
-        return get_appointment_service(db, _as_uuid(args["appointment_id"], "appointment_id"))
+        return get_appointment_service(db, int(args["appointment_id"]))
 
     if name == "get_appointments_by_patient":
-        return get_appointments_by_patient_service(db, _as_uuid(args["patient_id"], "patient_id"))
+        return get_appointments_by_patient_service(db, int(args["patient_id"]))
 
     if name == "get_appointments_by_doctor":
-        return get_appointments_by_doctor_service(db, _as_uuid(args["doctor_id"], "doctor_id"))
+        return get_appointments_by_doctor_service(db, int(args["doctor_id"]))
 
     if name == "get_appointments_by_status":
         return get_appointments_by_status_service(db, args["status"].upper())
 
     if name == "get_upcoming_active_appointments":
-        pid = _as_uuid(args["patient_id"], "patient_id") if args.get("patient_id") else None
+        pid = int(args["patient_id"]) if args.get("patient_id") else None
         return get_upcoming_active_appointments_service(db, pid)
 
     if name == "get_active_appointments_today":
-        pid = _as_uuid(args["patient_id"], "patient_id") if args.get("patient_id") else None
+        pid = int(args["patient_id"]) if args.get("patient_id") else None
         return get_active_appointments_by_date_service(db, date.today(), pid)
 
     if name == "get_appointments_by_date":
         return get_appointments_by_date_service(db, date.fromisoformat(args["appointment_date"]))
 
-    if name == "get_available_slots_by_doctor_and_date":
-        return get_available_slots_by_doctor_and_date_service(
+    if name == "get_available_times_by_doctor_and_date":
+        return get_available_times_by_doctor_and_date_service(
             db,
-            _as_uuid(args["doctor_id"], "doctor_id"),
-            date.fromisoformat(args["slot_date"]),
+            int(args["doctor_id"]),
+            date.fromisoformat(args["appointment_date"]),
         )
 
-    if name == "get_earliest_available_slot_by_doctor":
+    if name == "get_earliest_available_time_by_doctor":
         start_date = date.fromisoformat(args["start_date"]) if args.get("start_date") else None
-        return get_earliest_available_slot_by_doctor_service(
+        return get_earliest_available_time_by_doctor_service(
             db,
-            _as_uuid(args["doctor_id"], "doctor_id"),
+            int(args["doctor_id"]),
             start_date,
         )
 
-    if name == "suggest_available_slot":
-        return suggest_available_slot_service(
+    if name == "suggest_available_time":
+        return suggest_available_time_service(
             db,
-            _as_uuid(args["doctor_id"], "doctor_id"),
-            date.fromisoformat(args["slot_date"]),
+            int(args["doctor_id"]),
+            date.fromisoformat(args["appointment_date"]),
             args.get("preferred_time"),
         )
 
@@ -302,9 +298,11 @@ def execute(name: str, args: dict, db: Session):
         return create_appointment_service(
             db,
             AppointmentCreate(
-                slot_id=_as_uuid(args["slot_id"], "slot_id"),
-                patient_id=_as_uuid(args["patient_id"], "patient_id"),
-                doctor_id=_as_uuid(args["doctor_id"], "doctor_id"),
+                session_id=int(args["session_id"]),
+                patient_id=int(args["patient_id"]),
+                doctor_id=int(args["doctor_id"]),
+                appointment_date=date.fromisoformat(args["appointment_date"]),
+                start_time=time.fromisoformat(args["start_time"]),
             ),
         )
 
@@ -323,11 +321,11 @@ def execute(name: str, args: dict, db: Session):
 
         return update_appointment_service(
             db,
-            _as_uuid(args["appointment_id"], "appointment_id"),
+            int(args["appointment_id"]),
             AppointmentUpdate(**fields),
         )
 
     if name == "cancel_appointment":
-        return cancel_appointment_service(db, _as_uuid(args["appointment_id"], "appointment_id"))
+        return cancel_appointment_service(db, int(args["appointment_id"]))
 
     raise ValueError(f"Unknown appointment tool: {name}")

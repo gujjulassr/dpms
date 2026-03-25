@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Dict, List
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -8,7 +7,6 @@ from app.modules.waitlist.repository import (
     already_on_waitlist,
     create_waitlist,
     get_doctor_by_id,
-    get_first_available_slot_for_session,
     get_next_in_queue,
     get_patient_by_id,
     get_session_by_id,
@@ -34,7 +32,7 @@ def join_waitlist_service(db: Session, payload: WaitlistCreate) -> Dict:
     if not session:
         raise LookupError("Session not found")
 
-    if session["doctor_id"] != str(payload.doctor_id):
+    if session["doctor_id"] != payload.doctor_id:
         raise ValueError("Session does not belong to the given doctor")
 
     if already_on_waitlist(db, payload.patient_id, payload.session_id):
@@ -42,29 +40,33 @@ def join_waitlist_service(db: Session, payload: WaitlistCreate) -> Dict:
             f"{patient['full_name']} is already on the waitlist for this session."
         )
 
-    # Check if there's actually a free slot — no need to waitlist if available
-    free_slot = get_first_available_slot_for_session(db, payload.session_id)
-    if free_slot:
+    # Check if there's actually a free time window — no need to waitlist if available
+    from app.modules.appointments.repository import get_confirmed_appointments_for_session
+    from app.utils.availability import has_any_availability
+
+    booked = get_confirmed_appointments_for_session(db, payload.session_id)
+    if has_any_availability(
+        session_start=session["start_time"],
+        session_end=session["end_time"],
+        slot_duration_mins=int(doctor["slot_duration_mins"]),
+        booked_appointments=booked,
+    ):
         raise ValueError(
-            f"There is already an available slot at {free_slot['start_time']} for this session. "
-            "Please book it directly instead of joining the waitlist."
+            "There are still available times in this session. "
+            "Please book directly instead of joining the waitlist."
         )
 
     try:
         entry = create_waitlist(
             db,
             {
-                "patient_id": str(payload.patient_id),
-                "doctor_id": str(payload.doctor_id),
+                "patient_id": payload.patient_id,
+                "doctor_id": payload.doctor_id,
                 "session_id": payload.session_id,
                 "waitlist_date": payload.waitlist_date,
                 "priority": payload.priority,
                 "is_emergency": payload.is_emergency,
-                "emergency_declared_by": (
-                    str(payload.emergency_declared_by)
-                    if payload.emergency_declared_by
-                    else None
-                ),
+                "emergency_declared_by": payload.emergency_declared_by,
                 "emergency_reason": payload.emergency_reason,
             },
         )
@@ -75,7 +77,7 @@ def join_waitlist_service(db: Session, payload: WaitlistCreate) -> Dict:
         raise e
 
 
-def leave_waitlist_service(db: Session, waitlist_id: UUID) -> Dict:
+def leave_waitlist_service(db: Session, waitlist_id: int) -> Dict:
     entry = get_waitlist_by_id(db, waitlist_id)
     if not entry:
         raise LookupError("Waitlist entry not found")
@@ -102,7 +104,7 @@ def list_waitlist_service(db: Session) -> List[Dict]:
     return list_waitlist(db)
 
 
-def get_waitlist_by_patient_service(db: Session, patient_id: UUID) -> List[Dict]:
+def get_waitlist_by_patient_service(db: Session, patient_id: int) -> List[Dict]:
     return get_waitlist_by_patient(db, patient_id)
 
 
@@ -110,7 +112,7 @@ def get_waitlist_by_session_service(db: Session, session_id: int) -> List[Dict]:
     return get_waitlist_by_session(db, session_id)
 
 
-def get_waitlist_entry_service(db: Session, waitlist_id: UUID) -> Dict:
+def get_waitlist_entry_service(db: Session, waitlist_id: int) -> Dict:
     entry = get_waitlist_by_id(db, waitlist_id)
     if not entry:
         raise LookupError("Waitlist entry not found")
@@ -122,13 +124,16 @@ def get_waitlist_entry_service(db: Session, waitlist_id: UUID) -> Dict:
 def auto_allocate_from_waitlist(
     db: Session,
     session_id: int,
-    freed_slot_id: UUID,
+    freed_start_time,
+    freed_end_time,
+    freed_date,
+    doctor_id: str,
 ) -> bool:
     """
-    Called automatically when a cancellation frees a slot.
+    Called automatically when a cancellation frees a time slot.
 
     Finds the next WAITING patient in the queue (emergency first,
-    then by join time), books the freed slot for them, and marks
+    then by join time), books the freed time for them, and marks
     their waitlist entry as CONFIRMED.
 
     Returns True if a patient was allocated, False if queue was empty.
@@ -141,28 +146,26 @@ def auto_allocate_from_waitlist(
         return False  # nobody waiting
 
     # Import appointment repo directly (avoids circular import with appointments/service)
-    from app.modules.appointments.repository import (
-        create_appointment,
-        get_slot_by_id,
-        update_slot_status,
-    )
+    from app.modules.appointments.repository import create_appointment
 
-    # Book the slot for the waitlisted patient
-    create_appointment(
+    # Book the freed time for the waitlisted patient
+    created_appointment = create_appointment(
         db,
         {
-            "slot_id": str(freed_slot_id),
+            "session_id": session_id,
             "patient_id": next_patient["patient_id"],
             "doctor_id": next_patient["doctor_id"],
+            "appointment_date": freed_date,
+            "start_time": freed_start_time,
+            "end_time": freed_end_time,
             "status": "CONFIRMED",
         },
     )
-    update_slot_status(db, freed_slot_id, "BOOKED")
 
     # Mark waitlist entry as CONFIRMED
     update_waitlist(
         db,
-        UUID(next_patient["waitlist_id"]),
+        next_patient["waitlist_id"],
         {
             "status": "CONFIRMED",
             "notified_at": datetime.utcnow(),
@@ -174,12 +177,20 @@ def auto_allocate_from_waitlist(
     # Send waitlist-allocated notification email (best-effort)
     try:
         from app.modules.notifications.service import notify_waitlist_allocated
-        slot_data = get_slot_by_id(db, freed_slot_id)
-        patient   = get_patient_by_id(db, UUID(next_patient["patient_id"]))
-        doctor    = get_doctor_by_id(db, UUID(next_patient["doctor_id"]))
-        if slot_data and patient and doctor:
+        patient = get_patient_by_id(db, next_patient["patient_id"])
+        doctor = get_doctor_by_id(db, next_patient["doctor_id"])
+        if patient and doctor:
+            slot_data = {
+                "slot_date": freed_date,
+                "start_time": freed_start_time,
+            }
             notify_waitlist_allocated(
-                db, patient, doctor, slot_data, next_patient["waitlist_id"]
+                db,
+                patient,
+                doctor,
+                slot_data,
+                next_patient["waitlist_id"],
+                appointment_id=created_appointment["appointment_id"],
             )
     except Exception:
         pass  # never let notification failures block the allocation

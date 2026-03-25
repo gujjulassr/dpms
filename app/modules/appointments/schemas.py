@@ -1,6 +1,5 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -8,9 +7,15 @@ AppointmentStatus = Literal["CONFIRMED", "CANCELLED", "COMPLETED", "NO_SHOW"]
 
 
 class AppointmentCreate(BaseModel):
-    slot_id: UUID
-    patient_id: UUID
-    doctor_id: UUID
+    """
+    Create an appointment by specifying doctor, patient, session, and time.
+    No more slot_id — time is stored directly on the appointment.
+    """
+    patient_id: int
+    doctor_id: int
+    session_id: int
+    appointment_date: date
+    start_time: time
 
 
 class AppointmentUpdate(BaseModel):
@@ -22,10 +27,13 @@ class AppointmentUpdate(BaseModel):
 
 
 class AppointmentResponse(BaseModel):
-    appointment_id: UUID
-    slot_id: UUID
-    patient_id: UUID
-    doctor_id: UUID
+    appointment_id: int
+    patient_id: int
+    doctor_id: int
+    session_id: int
+    appointment_date: date
+    start_time: time
+    end_time: time
     booked_at: datetime
     status: AppointmentStatus
     reminder_24hr_sent: bool
@@ -36,7 +44,7 @@ class AppointmentResponse(BaseModel):
 
 
 class AppointmentFilters(BaseModel):
-    patient_id: Optional[UUID] = None
-    doctor_id: Optional[UUID] = None
+    patient_id: Optional[int] = None
+    doctor_id: Optional[int] = None
     status: Optional[AppointmentStatus] = None
     appointment_date: Optional[date] = None

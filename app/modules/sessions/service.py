@@ -1,71 +1,28 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta, time
 from typing import Dict, List
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.modules.sessions.repository import (
-    cancel_available_slots_for_session,
     cancel_confirmed_appointments_for_session,
     create_session,
-    create_slot,
     get_doctor_by_id,
     get_session_by_id,
     get_session_by_unique_key,
     get_sessions_by_date,
     get_sessions_by_doctor,
     get_sessions_by_status,
-    get_slots_by_session,
     list_sessions,
-    update_slot_status,
     update_session,
 )
 from app.modules.sessions.schemas import SessionCreate, SessionUpdate
 
-LUNCH_START = time(13, 0)
-LUNCH_END = time(13, 30)
-
-
-def _generate_slots(
-    db: Session,
-    *,
-    doctor_id: UUID,
-    session_id: int,
-    session_date,
-    start_time,
-    end_time,
-    slot_duration_mins: int,
-) -> List[Dict]:
-    slots = []
-    current = datetime.combine(session_date, start_time)
-    end_dt = datetime.combine(session_date, end_time)
-    lunch_start_dt = datetime.combine(session_date, LUNCH_START)
-    lunch_end_dt = datetime.combine(session_date, LUNCH_END)
-    step = timedelta(minutes=slot_duration_mins)
-
-    while current + step <= end_dt:
-        slot_end = current + step
-        overlaps_lunch = current < lunch_end_dt and slot_end > lunch_start_dt
-
-        slots.append(
-            create_slot(
-                db,
-                {
-                    "doctor_id": str(doctor_id),
-                    "session_id": session_id,
-                    "slot_date": session_date,
-                    "start_time": current.time(),
-                    "end_time": slot_end.time(),
-                    "status": "BLOCKED" if overlaps_lunch else "AVAILABLE",
-                },
-            )
-        )
-        current = slot_end
-
-    return slots
-
 
 def create_session_service(db: Session, payload: SessionCreate) -> Dict:
+    """
+    Create a doctor session. No more slot generation —
+    just creates the session row. Availability is calculated on-the-fly.
+    """
     doctor = get_doctor_by_id(db, payload.doctor_id)
     if not doctor:
         raise LookupError("Doctor not found")
@@ -83,7 +40,7 @@ def create_session_service(db: Session, payload: SessionCreate) -> Dict:
         session = create_session(
             db,
             {
-                "doctor_id": str(payload.doctor_id),
+                "doctor_id": payload.doctor_id,
                 "session_date": payload.session_date,
                 "session_name": payload.session_name,
                 "start_time": payload.start_time,
@@ -92,21 +49,10 @@ def create_session_service(db: Session, payload: SessionCreate) -> Dict:
             },
         )
 
-        slots = _generate_slots(
-            db,
-            doctor_id=payload.doctor_id,
-            session_id=session["session_id"],
-            session_date=payload.session_date,
-            start_time=payload.start_time,
-            end_time=payload.end_time,
-            slot_duration_mins=int(doctor["slot_duration_mins"]),
-        )
-
         db.commit()
         return {
             "session": session,
-            "slots_generated": len(slots),
-            "slots": slots,
+            "message": "Session created. Availability is calculated on-the-fly when patients book.",
         }
     except Exception as e:
         db.rollback()
@@ -116,12 +62,16 @@ def create_session_service(db: Session, payload: SessionCreate) -> Dict:
 def create_doctor_availability_range_service(
     db: Session,
     *,
-    doctor_id: UUID,
+    doctor_id: int,
     start_date: date,
     days: int,
     include_morning: bool = True,
     include_afternoon: bool = True,
 ) -> Dict:
+    """
+    Create sessions for a doctor over a date range.
+    No more slot generation — just creates session rows.
+    """
     doctor = get_doctor_by_id(db, doctor_id)
     if not doctor:
         raise LookupError("Doctor not found")
@@ -157,23 +107,13 @@ def create_doctor_availability_range_service(
                 session = create_session(
                     db,
                     {
-                        "doctor_id": str(doctor_id),
+                        "doctor_id": doctor_id,
                         "session_date": session_date,
                         "session_name": session_name,
                         "start_time": start_time,
                         "end_time": end_time,
                         "status": "OPEN",
                     },
-                )
-
-                slots = _generate_slots(
-                    db,
-                    doctor_id=doctor_id,
-                    session_id=session["session_id"],
-                    session_date=session_date,
-                    start_time=start_time,
-                    end_time=end_time,
-                    slot_duration_mins=int(doctor["slot_duration_mins"]),
                 )
 
                 created_sessions.append(
@@ -183,13 +123,12 @@ def create_doctor_availability_range_service(
                         "session_name": session["session_name"],
                         "start_time": session["start_time"],
                         "end_time": session["end_time"],
-                        "slots_generated": len(slots),
                     }
                 )
 
         db.commit()
         return {
-            "doctor_id": str(doctor_id),
+            "doctor_id": doctor_id,
             "doctor_name": doctor["full_name"],
             "specialization": doctor["specialization"],
             "start_date": start_date.isoformat(),
@@ -215,7 +154,7 @@ def list_sessions_service(db: Session) -> List[Dict]:
     return list_sessions(db)
 
 
-def get_sessions_by_doctor_service(db: Session, doctor_id: UUID) -> List[Dict]:
+def get_sessions_by_doctor_service(db: Session, doctor_id: int) -> List[Dict]:
     return get_sessions_by_doctor(db, doctor_id)
 
 
@@ -225,13 +164,6 @@ def get_sessions_by_date_service(db: Session, session_date) -> List[Dict]:
 
 def get_sessions_by_status_service(db: Session, status: str) -> List[Dict]:
     return get_sessions_by_status(db, status)
-
-
-def get_session_slots_service(db: Session, session_id: int) -> List[Dict]:
-    session = get_session_by_id(db, session_id)
-    if not session:
-        raise LookupError("Session not found")
-    return get_slots_by_session(db, session_id)
 
 
 def update_session_service(db: Session, session_id: int, payload: SessionUpdate) -> Dict:
@@ -253,17 +185,9 @@ def update_session_service(db: Session, session_id: int, payload: SessionUpdate)
             raise LookupError("Session not found")
 
         cancelled_appointments = []
-        cancelled_slots = []
 
         if merged["status"] == "CLOSED" and existing["status"] != "CLOSED":
             cancelled_appointments = cancel_confirmed_appointments_for_session(db, session_id)
-
-            for appointment in cancelled_appointments:
-                slot = update_slot_status(db, UUID(appointment["slot_id"]), "CANCELLED")
-                if slot:
-                    cancelled_slots.append(slot)
-
-            cancelled_slots.extend(cancel_available_slots_for_session(db, session_id))
 
         db.commit()
 
@@ -271,7 +195,6 @@ def update_session_service(db: Session, session_id: int, payload: SessionUpdate)
             return {
                 "session": session,
                 "cancelled_appointments": len(cancelled_appointments),
-                "cancelled_slots": len(cancelled_slots),
             }
 
         return session

@@ -1,15 +1,12 @@
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Dict, List, Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
 def _serialize_value(value):
-    if isinstance(value, UUID):
-        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime, time)):
@@ -21,10 +18,10 @@ def _serialize_row(row) -> dict:
     return {key: _serialize_value(value) for key, value in dict(row).items()}
 
 
-def get_doctor_by_id(db: Session, doctor_id: UUID) -> Optional[Dict]:
+def get_doctor_by_id(db: Session, doctor_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM doctors WHERE doctor_id = :doctor_id"),
-        {"doctor_id": str(doctor_id)},
+        {"doctor_id": doctor_id},
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
@@ -65,7 +62,7 @@ def get_session_by_id(db: Session, session_id: int) -> Optional[Dict]:
 
 def get_session_by_unique_key(
     db: Session,
-    doctor_id: UUID,
+    doctor_id: int,
     session_date: date,
     session_name: str,
 ) -> Optional[Dict]:
@@ -77,7 +74,7 @@ def get_session_by_unique_key(
               AND session_name = :session_name
         """),
         {
-            "doctor_id": str(doctor_id),
+            "doctor_id": doctor_id,
             "session_date": session_date,
             "session_name": session_name,
         },
@@ -88,19 +85,34 @@ def get_session_by_unique_key(
 
 def list_sessions(db: Session) -> List[Dict]:
     result = db.execute(
-        text("SELECT * FROM sessions ORDER BY session_date DESC, start_time DESC")
+        text("""
+            SELECT
+                s.*,
+                d.full_name     AS doctor_name,
+                d.specialization,
+                d.is_active     AS doctor_is_active
+            FROM sessions s
+            JOIN doctors d ON d.doctor_id = s.doctor_id
+            ORDER BY s.session_date DESC, s.start_time DESC
+        """)
     )
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def get_sessions_by_doctor(db: Session, doctor_id: UUID) -> List[Dict]:
+def get_sessions_by_doctor(db: Session, doctor_id: int) -> List[Dict]:
     result = db.execute(
         text("""
-            SELECT * FROM sessions
-            WHERE doctor_id = :doctor_id
-            ORDER BY session_date DESC, start_time DESC
+            SELECT
+                s.*,
+                d.full_name     AS doctor_name,
+                d.specialization,
+                d.is_active     AS doctor_is_active
+            FROM sessions s
+            JOIN doctors d ON d.doctor_id = s.doctor_id
+            WHERE s.doctor_id = :doctor_id
+            ORDER BY s.session_date DESC, s.start_time DESC
         """),
-        {"doctor_id": str(doctor_id)},
+        {"doctor_id": doctor_id},
     )
     return [_serialize_row(row) for row in result.mappings().all()]
 
@@ -108,9 +120,15 @@ def get_sessions_by_doctor(db: Session, doctor_id: UUID) -> List[Dict]:
 def get_sessions_by_date(db: Session, session_date: date) -> List[Dict]:
     result = db.execute(
         text("""
-            SELECT * FROM sessions
-            WHERE session_date = :session_date
-            ORDER BY start_time
+            SELECT
+                s.*,
+                d.full_name     AS doctor_name,
+                d.specialization,
+                d.is_active     AS doctor_is_active
+            FROM sessions s
+            JOIN doctors d ON d.doctor_id = s.doctor_id
+            WHERE s.session_date = :session_date
+            ORDER BY s.start_time
         """),
         {"session_date": session_date},
     )
@@ -120,9 +138,15 @@ def get_sessions_by_date(db: Session, session_date: date) -> List[Dict]:
 def get_sessions_by_status(db: Session, status: str) -> List[Dict]:
     result = db.execute(
         text("""
-            SELECT * FROM sessions
-            WHERE status = :status
-            ORDER BY session_date DESC, start_time DESC
+            SELECT
+                s.*,
+                d.full_name     AS doctor_name,
+                d.specialization,
+                d.is_active     AS doctor_is_active
+            FROM sessions s
+            JOIN doctors d ON d.doctor_id = s.doctor_id
+            WHERE s.status = :status
+            ORDER BY s.session_date DESC, s.start_time DESC
         """),
         {"status": status},
     )
@@ -146,95 +170,26 @@ def update_session(db: Session, session_id: int, data: dict) -> Optional[Dict]:
 
 
 def cancel_confirmed_appointments_for_session(db: Session, session_id: int) -> List[Dict]:
+    """Cancel all CONFIRMED appointments in a session (used when closing a session)."""
     result = db.execute(
         text("""
-            UPDATE appointments AS a
+            UPDATE appointments
             SET
                 status = 'CANCELLED',
-                cancelled_at = COALESCE(a.cancelled_at, NOW()),
+                cancelled_at = COALESCE(cancelled_at, NOW()),
                 updated_at = NOW()
-            FROM slots AS s
-            WHERE a.slot_id = s.slot_id
-              AND s.session_id = :session_id
-              AND a.status = 'CONFIRMED'
+            WHERE session_id = :session_id
+              AND status = 'CONFIRMED'
             RETURNING
-                a.appointment_id,
-                a.slot_id,
-                a.patient_id,
-                a.doctor_id,
-                a.status,
-                a.cancelled_at,
-                a.updated_at
-        """),
-        {"session_id": session_id},
-    )
-    return [_serialize_row(row) for row in result.mappings().all()]
-
-
-def create_slot(db: Session, data: dict) -> dict:
-    result = db.execute(
-        text("""
-            INSERT INTO slots (
+                appointment_id,
+                patient_id,
                 doctor_id,
                 session_id,
-                slot_date,
                 start_time,
                 end_time,
-                status
-            )
-            VALUES (
-                :doctor_id,
-                :session_id,
-                :slot_date,
-                :start_time,
-                :end_time,
-                :status
-            )
-            RETURNING *
-        """),
-        data,
-    )
-    return _serialize_row(result.mappings().one())
-
-
-def update_slot_status(db: Session, slot_id: UUID, status: str) -> Optional[Dict]:
-    result = db.execute(
-        text("""
-            UPDATE slots
-            SET
-                status = :status,
-                updated_at = NOW()
-            WHERE slot_id = :slot_id
-            RETURNING *
-        """),
-        {"slot_id": str(slot_id), "status": status},
-    )
-    row = result.mappings().first()
-    return _serialize_row(row) if row else None
-
-
-def cancel_available_slots_for_session(db: Session, session_id: int) -> List[Dict]:
-    result = db.execute(
-        text("""
-            UPDATE slots
-            SET
-                status = 'CANCELLED',
-                updated_at = NOW()
-            WHERE session_id = :session_id
-              AND status = 'AVAILABLE'
-            RETURNING *
-        """),
-        {"session_id": session_id},
-    )
-    return [_serialize_row(row) for row in result.mappings().all()]
-
-
-def get_slots_by_session(db: Session, session_id: int) -> List[Dict]:
-    result = db.execute(
-        text("""
-            SELECT * FROM slots
-            WHERE session_id = :session_id
-            ORDER BY start_time
+                status,
+                cancelled_at,
+                updated_at
         """),
         {"session_id": session_id},
     )

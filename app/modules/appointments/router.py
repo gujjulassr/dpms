@@ -1,6 +1,4 @@
 from datetime import date
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -39,12 +37,12 @@ def list_appointments(db: Session = Depends(get_db)):
 
 
 @router.get("/search/patient", response_model=list)
-def get_by_patient(patient_id: UUID, db: Session = Depends(get_db)):
+def get_by_patient(patient_id: int, db: Session = Depends(get_db)):
     return get_appointments_by_patient_service(db, patient_id)
 
 
 @router.get("/search/doctor", response_model=list)
-def get_by_doctor(doctor_id: UUID, db: Session = Depends(get_db)):
+def get_by_doctor(doctor_id: int, db: Session = Depends(get_db)):
     return get_appointments_by_doctor_service(db, doctor_id)
 
 
@@ -69,7 +67,7 @@ def get_by_date(appointment_date: date, db: Session = Depends(get_db)):
 
 
 @router.get("/{appointment_id}", response_model=dict)
-def get_appointment(appointment_id: UUID, db: Session = Depends(get_db)):
+def get_appointment(appointment_id: int, db: Session = Depends(get_db)):
     try:
         return get_appointment_service(db, appointment_id)
     except LookupError as e:
@@ -77,7 +75,7 @@ def get_appointment(appointment_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/{appointment_id}", response_model=dict)
-def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, db: Session = Depends(get_db)):
+def update_appointment(appointment_id: int, payload: AppointmentUpdate, db: Session = Depends(get_db)):
     try:
         return update_appointment_service(db, appointment_id, payload)
     except LookupError as e:
@@ -87,7 +85,7 @@ def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, db: Ses
 
 
 @router.post("/{appointment_id}/cancel", response_model=dict)
-def cancel_appointment(appointment_id: UUID, db: Session = Depends(get_db)):
+def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
     try:
         return cancel_appointment_service(db, appointment_id)
     except LookupError as e:

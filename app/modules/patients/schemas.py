@@ -9,7 +9,6 @@
 
 from datetime import date, datetime
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -45,7 +44,7 @@ class PatientUpdate(BaseModel):
 #PatientResponse is what we send back to the client
 
 class PatientResponse(BaseModel):
-    patient_id: UUID
+    patient_id: int
     full_name: str
     email: str
     phone: str

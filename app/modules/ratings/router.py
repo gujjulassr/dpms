@@ -17,8 +17,9 @@ import os
 from typing import Optional
 
 import jwt
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse
+from sqlalchemy import text
 
 from app.database.connection.database import get_session
 
@@ -40,22 +41,21 @@ def _decode_review_token(token: str) -> Optional[dict]:
         return None
 
 
-def _load_appointment_info(appointment_id: str) -> dict:
+def _load_appointment_info(appointment_id: int) -> dict:
     db = get_session()
     try:
         row = db.execute(
-            __import__("sqlalchemy").text("""
+            text("""
                 SELECT
                     p.full_name     AS patient_name,
                     d.full_name     AS doctor_name,
                     d.specialization,
-                    s.slot_date,
-                    s.start_time,
+                    a.appointment_date AS slot_date,
+                    a.start_time,
                     a.review_sent
                 FROM appointments a
                 JOIN patients p ON p.patient_id = a.patient_id
                 JOIN doctors  d ON d.doctor_id  = a.doctor_id
-                JOIN slots    s ON s.slot_id    = a.slot_id
                 WHERE a.appointment_id = :aid
             """),
             {"aid": appointment_id},
@@ -65,11 +65,11 @@ def _load_appointment_info(appointment_id: str) -> dict:
         db.close()
 
 
-def _already_rated(appointment_id: str) -> bool:
+def _already_rated(appointment_id: int) -> bool:
     db = get_session()
     try:
         row = db.execute(
-            __import__("sqlalchemy").text(
+            text(
                 "SELECT 1 FROM doctor_ratings WHERE appointment_id = :aid"
             ),
             {"aid": appointment_id},
@@ -79,9 +79,8 @@ def _already_rated(appointment_id: str) -> bool:
         db.close()
 
 
-def _save_rating(appointment_id: str, patient_id: str, doctor_id: str,
+def _save_rating(appointment_id: int, patient_id: int, doctor_id: int,
                  stars: int, comment: str) -> None:
-    from sqlalchemy import text
     db = get_session()
     try:
         db.execute(
@@ -323,7 +322,6 @@ def rating_page(token: str, stars: Optional[int] = None):
 @router.post("/{token}", response_class=HTMLResponse)
 async def submit_rating(
     token: str,
-    request: Request,
     stars: int = Form(...),
     comment: str = Form(""),
 ):

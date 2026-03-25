@@ -6,8 +6,6 @@ Owns everything about staff chatbot tools:
   execute() — dispatches tool name → staff service call
 """
 
-from uuid import UUID
-
 from sqlalchemy.orm import Session
 
 from app.modules.staff.schemas import StaffCreate, StaffUpdate
@@ -35,11 +33,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_staff_by_id",
-            "description": "Look up a single staff member by their UUID.",
+            "description": "Look up a single staff member by their ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "staff_id": {"type": "string", "description": "Staff UUID"},
+                    "staff_id": {"type": "integer", "description": "Staff ID"},
                 },
                 "required": ["staff_id"],
             },
@@ -120,7 +118,7 @@ SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "staff_id":  {"type": "string", "description": "Staff UUID (required)"},
+                    "staff_id":  {"type": "integer", "description": "Staff ID (required)"},
                     "full_name": {"type": "string"},
                     "email":     {"type": "string"},
                     "phone":     {"type": "string"},
@@ -142,7 +140,7 @@ def execute(name: str, args: dict, db: Session):
         return list_staff_service(db)
 
     if name == "get_staff_by_id":
-        return get_staff_service(db, UUID(args["staff_id"]))
+        return get_staff_service(db, int(args["staff_id"]))
 
     if name == "get_staff_by_email":
         return get_staff_by_email_service(db, args["email"])
@@ -168,4 +166,4 @@ def execute(name: str, args: dict, db: Session):
         if args.get("phone") is not None:     fields["phone"]     = args["phone"]
         if args.get("role") is not None:      fields["role"]      = args["role"]
         if args.get("is_active") is not None: fields["is_active"] = args["is_active"]
-        return update_staff_service(db, UUID(args["staff_id"]), StaffUpdate(**fields))
+        return update_staff_service(db, int(args["staff_id"]), StaffUpdate(**fields))

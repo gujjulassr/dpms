@@ -1,15 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
 def _serialize_value(value):
-    if isinstance(value, UUID):
-        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime)):
@@ -73,7 +70,7 @@ def get_patient_by_phone(db:Session,phone:str)->Optional[Dict]:
     return _serialize_row(row) if row else None
 
 
-def get_patient_by_id(db:Session,patient_id:UUID)->Optional[Dict]:
+def get_patient_by_id(db:Session,patient_id:int)->Optional[Dict]:
 
     query=text(
         """
@@ -83,7 +80,7 @@ def get_patient_by_id(db:Session,patient_id:UUID)->Optional[Dict]:
         """
     )
 
-    result=db.execute(query,{"patient_id":str(patient_id)})
+    result=db.execute(query,{"patient_id":patient_id})
     row=result.mappings().first()
     return _serialize_row(row) if row else None
 
@@ -121,27 +118,27 @@ def get_patients_by_name(db:Session,name:str)->List[Dict]:
 
 
 
-def delete_patient(db: Session, patient_id: UUID) -> bool:
+def delete_patient(db: Session, patient_id: int) -> bool:
     """Delete a patient and their linked user account (if any). Returns True if deleted."""
     # Delete linked user account first (FK constraint)
     db.execute(
         text("DELETE FROM users WHERE patient_id = :pid"),
-        {"pid": str(patient_id)},
+        {"pid": patient_id},
     )
     result = db.execute(
         text("DELETE FROM patients WHERE patient_id = :pid RETURNING patient_id"),
-        {"pid": str(patient_id)},
+        {"pid": patient_id},
     )
     return result.rowcount > 0
 
 
-def update_patient(db:Session,patient_id:UUID,patient_data:Dict)->Optional[Dict]:
+def update_patient(db:Session,patient_id:int,patient_data:Dict)->Optional[Dict]:
 
     query=text(
         """
         UPDATE patients
 
-        SET 
+        SET
             full_name=:full_name,
             email=:email,
             phone=:phone,
@@ -155,7 +152,7 @@ def update_patient(db:Session,patient_id:UUID,patient_data:Dict)->Optional[Dict]
     )
 
     payload={
-        "patient_id":str(patient_id),
+        "patient_id":patient_id,
         **patient_data,
     }
 

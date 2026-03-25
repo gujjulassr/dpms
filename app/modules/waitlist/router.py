@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -33,7 +31,7 @@ def list_waitlist(db: Session = Depends(get_db)):
 
 
 @router.get("/search/patient", response_model=list)
-def get_by_patient(patient_id: UUID, db: Session = Depends(get_db)):
+def get_by_patient(patient_id: int, db: Session = Depends(get_db)):
     return get_waitlist_by_patient_service(db, patient_id)
 
 
@@ -43,7 +41,7 @@ def get_by_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{waitlist_id}", response_model=dict)
-def get_waitlist_entry(waitlist_id: UUID, db: Session = Depends(get_db)):
+def get_waitlist_entry(waitlist_id: int, db: Session = Depends(get_db)):
     try:
         return get_waitlist_entry_service(db, waitlist_id)
     except LookupError as e:
@@ -51,7 +49,7 @@ def get_waitlist_entry(waitlist_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{waitlist_id}/leave", response_model=dict)
-def leave_waitlist(waitlist_id: UUID, db: Session = Depends(get_db)):
+def leave_waitlist(waitlist_id: int, db: Session = Depends(get_db)):
     try:
         return leave_waitlist_service(db, waitlist_id)
     except LookupError as e:

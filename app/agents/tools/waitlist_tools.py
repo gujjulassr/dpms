@@ -7,8 +7,6 @@ Owns everything about waitlist chatbot tools:
 """
 
 from datetime import date
-from uuid import UUID
-
 from sqlalchemy.orm import Session
 
 from app.modules.waitlist.schemas import WaitlistCreate
@@ -20,13 +18,6 @@ from app.modules.waitlist.service import (
     leave_waitlist_service,
     list_waitlist_service,
 )
-
-
-def _as_uuid(value: str, field_name: str) -> UUID:
-    try:
-        return UUID(value)
-    except (ValueError, TypeError, AttributeError):
-        raise ValueError(f"Please provide a valid {field_name}.")
 
 
 SCHEMAS = [
@@ -42,11 +33,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_waitlist_entry",
-            "description": "Look up a single waitlist entry by its UUID.",
+            "description": "Look up a single waitlist entry by its ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "waitlist_id": {"type": "string", "description": "Waitlist entry UUID"},
+                    "waitlist_id": {"type": "integer", "description": "Waitlist entry ID"},
                 },
                 "required": ["waitlist_id"],
             },
@@ -56,11 +47,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_waitlist_by_patient",
-            "description": "Get all waitlist entries for a given patient UUID.",
+            "description": "Get all waitlist entries for a given patient ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
                 },
                 "required": ["patient_id"],
             },
@@ -86,14 +77,14 @@ SCHEMAS = [
             "name": "join_waitlist",
             "description": (
                 "Add a patient to the waitlist for a fully-booked session. "
-                "Only call this after confirming no available slots exist. "
+                "Only call this after confirming no available times exist. "
                 "priority: 2=NORMAL (default), 1=EMERGENCY."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient UUID"},
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "patient_id": {"type": "integer", "description": "Patient ID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                     "session_id": {"type": "integer", "description": "Session ID"},
                     "waitlist_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
                     "priority": {
@@ -114,11 +105,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "leave_waitlist",
-            "description": "Remove (cancel) a patient from the waitlist by waitlist entry UUID.",
+            "description": "Remove (cancel) a patient from the waitlist by waitlist entry ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "waitlist_id": {"type": "string", "description": "Waitlist entry UUID"},
+                    "waitlist_id": {"type": "integer", "description": "Waitlist entry ID"},
                 },
                 "required": ["waitlist_id"],
             },
@@ -132,10 +123,10 @@ def execute(name: str, args: dict, db: Session):
         return list_waitlist_service(db)
 
     if name == "get_waitlist_entry":
-        return get_waitlist_entry_service(db, _as_uuid(args["waitlist_id"], "waitlist_id"))
+        return get_waitlist_entry_service(db, int(args["waitlist_id"]))
 
     if name == "get_waitlist_by_patient":
-        return get_waitlist_by_patient_service(db, _as_uuid(args["patient_id"], "patient_id"))
+        return get_waitlist_by_patient_service(db, int(args["patient_id"]))
 
     if name == "get_waitlist_by_session":
         return get_waitlist_by_session_service(db, int(args["session_id"]))
@@ -144,8 +135,8 @@ def execute(name: str, args: dict, db: Session):
         return join_waitlist_service(
             db,
             WaitlistCreate(
-                patient_id=_as_uuid(args["patient_id"], "patient_id"),
-                doctor_id=_as_uuid(args["doctor_id"], "doctor_id"),
+                patient_id=int(args["patient_id"]),
+                doctor_id=int(args["doctor_id"]),
                 session_id=int(args["session_id"]),
                 waitlist_date=date.fromisoformat(args["waitlist_date"]),
                 priority=args.get("priority", 2),
@@ -155,6 +146,6 @@ def execute(name: str, args: dict, db: Session):
         )
 
     if name == "leave_waitlist":
-        return leave_waitlist_service(db, _as_uuid(args["waitlist_id"], "waitlist_id"))
+        return leave_waitlist_service(db, int(args["waitlist_id"]))
 
     raise ValueError(f"Unknown waitlist tool: {name}")

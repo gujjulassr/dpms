@@ -7,15 +7,12 @@ Owns everything about session chatbot tools:
 """
 
 from datetime import date, time
-from uuid import UUID
-
 from sqlalchemy.orm import Session
 
 from app.modules.sessions.schemas import SessionCreate, SessionUpdate
 from app.modules.sessions.service import (
     create_session_service,
     get_session_service,
-    get_session_slots_service,
     get_sessions_by_date_service,
     get_sessions_by_doctor_service,
     get_sessions_by_status_service,
@@ -51,11 +48,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_sessions_by_doctor",
-            "description": "List sessions for a given doctor UUID.",
+            "description": "List sessions for a given doctor ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                 },
                 "required": ["doctor_id"],
             },
@@ -92,26 +89,15 @@ SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "get_session_slots",
-            "description": "List all slots generated for a given session ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "integer", "description": "Session ID"},
-                },
-                "required": ["session_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "create_session",
-            "description": "Create a doctor session for a specific day and time range. Slots are auto-generated from the doctor's slot duration, and lunch overlap slots are auto-blocked.",
+            "description": (
+                "Create a doctor session for a specific day and time range. "
+                "Availability is calculated on-the-fly when patients book — no slots are pre-generated."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                     "session_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
                     "session_name": {"type": "string", "description": "MORNING or AFTERNOON"},
                     "start_time": {"type": "string", "description": "Start time in HH:MM or HH:MM:SS"},
@@ -162,7 +148,7 @@ def execute(name: str, args: dict, db: Session):
         return get_session_service(db, int(args["session_id"]))
 
     if name == "get_sessions_by_doctor":
-        return get_sessions_by_doctor_service(db, UUID(args["doctor_id"]))
+        return get_sessions_by_doctor_service(db, int(args["doctor_id"]))
 
     if name == "get_sessions_by_date":
         return get_sessions_by_date_service(db, date.fromisoformat(args["session_date"]))
@@ -170,14 +156,11 @@ def execute(name: str, args: dict, db: Session):
     if name == "get_sessions_by_status":
         return get_sessions_by_status_service(db, args["status"].upper())
 
-    if name == "get_session_slots":
-        return get_session_slots_service(db, int(args["session_id"]))
-
     if name == "create_session":
         return create_session_service(
             db,
             SessionCreate(
-                doctor_id=UUID(args["doctor_id"]),
+                doctor_id=int(args["doctor_id"]),
                 session_date=date.fromisoformat(args["session_date"]),
                 session_name=args["session_name"].upper(),
                 start_time=time.fromisoformat(args["start_time"]),

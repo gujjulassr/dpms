@@ -1,5 +1,4 @@
 from typing import Dict, List
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -32,7 +31,7 @@ def create_staff_service(db: Session, payload: StaffCreate) -> Dict:
         raise e
 
 
-def get_staff_service(db: Session, staff_id: UUID) -> Dict:
+def get_staff_service(db: Session, staff_id: int) -> Dict:
     member = get_staff_by_id(db, staff_id)
     if not member:
         raise LookupError("Staff member not found")
@@ -58,7 +57,7 @@ def list_staff_service(db: Session) -> List[Dict]:
     return list_staff(db)
 
 
-def update_staff_service(db: Session, staff_id: UUID, payload: StaffUpdate) -> Dict:
+def update_staff_service(db: Session, staff_id: int, payload: StaffUpdate) -> Dict:
     existing = get_staff_by_id(db, staff_id)
     if not existing:
         raise LookupError("Staff member not found")
@@ -69,12 +68,12 @@ def update_staff_service(db: Session, staff_id: UUID, payload: StaffUpdate) -> D
 
     if "email" in update_data:
         clash = get_staff_by_email(db, update_data["email"])
-        if clash and str(clash["staff_id"]) != str(staff_id):
+        if clash and clash["staff_id"] != staff_id:
             raise ValueError("Another staff member with this email already exists")
 
     if "phone" in update_data:
         clash = get_staff_by_phone(db, update_data["phone"])
-        if clash and str(clash["staff_id"]) != str(staff_id):
+        if clash and clash["staff_id"] != staff_id:
             raise ValueError("Another staff member with this phone already exists")
 
     merged = {

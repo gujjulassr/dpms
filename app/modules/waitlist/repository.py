@@ -1,15 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
 def _serialize_value(value):
-    if isinstance(value, UUID):
-        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime)):
@@ -23,19 +20,19 @@ def _serialize_row(row) -> dict:
 
 # ── helpers ────────────────────────────────────────────────────────────
 
-def get_patient_by_id(db: Session, patient_id: UUID) -> Optional[Dict]:
+def get_patient_by_id(db: Session, patient_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM patients WHERE patient_id = :patient_id"),
-        {"patient_id": str(patient_id)},
+        {"patient_id": patient_id},
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
 
 
-def get_doctor_by_id(db: Session, doctor_id: UUID) -> Optional[Dict]:
+def get_doctor_by_id(db: Session, doctor_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM doctors WHERE doctor_id = :doctor_id"),
-        {"doctor_id": str(doctor_id)},
+        {"doctor_id": doctor_id},
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
@@ -44,21 +41,6 @@ def get_doctor_by_id(db: Session, doctor_id: UUID) -> Optional[Dict]:
 def get_session_by_id(db: Session, session_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM sessions WHERE session_id = :session_id"),
-        {"session_id": session_id},
-    )
-    row = result.mappings().first()
-    return _serialize_row(row) if row else None
-
-
-def get_first_available_slot_for_session(db: Session, session_id: int) -> Optional[Dict]:
-    result = db.execute(
-        text("""
-            SELECT * FROM slots
-            WHERE session_id = :session_id
-              AND status = 'AVAILABLE'
-            ORDER BY start_time
-            LIMIT 1
-        """),
         {"session_id": session_id},
     )
     row = result.mappings().first()
@@ -97,23 +79,23 @@ def create_waitlist(db: Session, data: dict) -> Dict:
     return _serialize_row(result.mappings().one())
 
 
-def get_waitlist_by_id(db: Session, waitlist_id: UUID) -> Optional[Dict]:
+def get_waitlist_by_id(db: Session, waitlist_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM waitlist WHERE waitlist_id = :waitlist_id"),
-        {"waitlist_id": str(waitlist_id)},
+        {"waitlist_id": waitlist_id},
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
 
 
-def get_waitlist_by_patient(db: Session, patient_id: UUID) -> List[Dict]:
+def get_waitlist_by_patient(db: Session, patient_id: int) -> List[Dict]:
     result = db.execute(
         text("""
             SELECT * FROM waitlist
             WHERE patient_id = :patient_id
             ORDER BY joined_at DESC
         """),
-        {"patient_id": str(patient_id)},
+        {"patient_id": patient_id},
     )
     return [_serialize_row(row) for row in result.mappings().all()]
 
@@ -157,7 +139,7 @@ def list_waitlist(db: Session) -> List[Dict]:
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def update_waitlist(db: Session, waitlist_id: UUID, data: dict) -> Optional[Dict]:
+def update_waitlist(db: Session, waitlist_id: int, data: dict) -> Optional[Dict]:
     result = db.execute(
         text("""
             UPDATE waitlist
@@ -170,13 +152,13 @@ def update_waitlist(db: Session, waitlist_id: UUID, data: dict) -> Optional[Dict
             WHERE waitlist_id = :waitlist_id
             RETURNING *
         """),
-        {"waitlist_id": str(waitlist_id), **data},
+        {"waitlist_id": waitlist_id, **data},
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
 
 
-def already_on_waitlist(db: Session, patient_id: UUID, session_id: int) -> bool:
+def already_on_waitlist(db: Session, patient_id: int, session_id: int) -> bool:
     """Check if patient is already WAITING for this session."""
     result = db.execute(
         text("""
@@ -186,6 +168,6 @@ def already_on_waitlist(db: Session, patient_id: UUID, session_id: int) -> bool:
               AND status = 'WAITING'
             LIMIT 1
         """),
-        {"patient_id": str(patient_id), "session_id": session_id},
+        {"patient_id": patient_id, "session_id": session_id},
     )
     return result.first() is not None

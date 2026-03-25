@@ -18,6 +18,7 @@ import jwt
 import requests as http_requests
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.modules.auth.repository import (
     create_user,
@@ -63,6 +64,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(payload: dict) -> str:
     data = payload.copy()
+    # Ensure all values are JSON-serializable (handles leftover UUID objects
+    # from databases that haven't been fully migrated to SERIAL yet)
+    for k, v in data.items():
+        if not isinstance(v, (str, int, float, bool, type(None))):
+            data[k] = str(v)
     data["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     data["iat"] = datetime.utcnow()
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
@@ -84,23 +90,23 @@ def login_service(db: Session, payload: LoginRequest) -> TokenResponse:
         raise ValueError("Invalid username or password")
 
     token = create_access_token({
-        "user_id":      str(user["user_id"]),
+        "user_id":      user["user_id"],
         "username":     user["username"],
         "role":         user["role"],
         "display_name": user["display_name"],
-        "staff_id":     str(user["staff_id"])   if user.get("staff_id")   else None,
-        "patient_id":   str(user["patient_id"]) if user.get("patient_id") else None,
-        "doctor_id":    str(user["doctor_id"])  if user.get("doctor_id")  else None,
+        "staff_id":     user.get("staff_id"),
+        "patient_id":   user.get("patient_id"),
+        "doctor_id":    user.get("doctor_id"),
     })
 
-    update_last_login(db, str(user["user_id"]))
+    update_last_login(db, user["user_id"])
     db.commit()
 
     return TokenResponse(
         access_token=token,
         role=user["role"],
         username=user["username"],
-        user_id=str(user["user_id"]),
+        user_id=user["user_id"],
         display_name=user["display_name"],
     )
 
@@ -115,13 +121,13 @@ def get_current_user_service(db: Session, token: str) -> UserInfo:
         raise PermissionError("User not found or inactive")
 
     return UserInfo(
-        user_id=str(user["user_id"]),
+        user_id=user["user_id"],
         username=user["username"],
         role=user["role"],
         display_name=user["display_name"],
-        staff_id=str(user["staff_id"])     if user.get("staff_id")   else None,
-        patient_id=str(user["patient_id"]) if user.get("patient_id") else None,
-        doctor_id=str(user["doctor_id"])   if user.get("doctor_id")  else None,
+        staff_id=user.get("staff_id"),
+        patient_id=user.get("patient_id"),
+        doctor_id=user.get("doctor_id"),
         is_active=user["is_active"],
     )
 
@@ -156,7 +162,6 @@ def google_register_service(db: Session, payload) -> TokenResponse:
     Validates the short-lived reg_token, creates the patient + user record,
     and returns a full JWT to log the user in.
     """
-    from sqlalchemy import text
 
     # Decode and validate the registration token
     try:
@@ -203,7 +208,7 @@ def google_register_service(db: Session, payload) -> TokenResponse:
         """),
         {"name": full_name, "email": email, "phone": phone, "dob": dob},
     ).mappings().one()
-    patient_id = str(new_patient["patient_id"])
+    patient_id = new_patient["patient_id"]
 
     # Re-use existing user account if present (orphaned account re-registration),
     # otherwise create a brand new one.
@@ -254,7 +259,7 @@ def google_register_service(db: Session, payload) -> TokenResponse:
 
     # Issue JWT
     token = create_access_token({
-        "user_id":      str(user["user_id"]),
+        "user_id":      user["user_id"],
         "username":     user["username"],
         "role":         "PATIENT",
         "display_name": user["display_name"],
@@ -267,7 +272,7 @@ def google_register_service(db: Session, payload) -> TokenResponse:
         access_token=token,
         role="PATIENT",
         username=user["username"],
-        user_id=str(user["user_id"]),
+        user_id=user["user_id"],
         display_name=user["display_name"],
     )
 
@@ -322,6 +327,11 @@ def _exchange_google_code(code: str) -> dict:
         "redirect_uri":  GOOGLE_REDIRECT_URI,
         "grant_type":    "authorization_code",
     }, timeout=10)
+    if not resp.ok:
+        import logging
+        logging.getLogger(__name__).error(
+            "Google token exchange failed: %s %s", resp.status_code, resp.text
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -364,7 +374,6 @@ def google_callback_service(db: Session, code: str, state: str) -> str:
     full_name   = google_info.get("name") or f"{given_name} {family_name}".strip() or email
 
     # 4. Look up existing user by google_sub or email
-    from sqlalchemy import text
     user_row = db.execute(
         text("SELECT * FROM users WHERE google_sub = :sub AND is_active = TRUE"),
         {"sub": google_sub},
@@ -389,7 +398,7 @@ def google_callback_service(db: Session, code: str, state: str) -> str:
                     "google_sub": google_sub,
                     "email":      email,
                     "full_name":  full_name,
-                    "user_id":    str(user["user_id"]),   # re-use existing user account
+                    "user_id":    user["user_id"],   # re-use existing user account
                     "exp":        datetime.utcnow() + timedelta(minutes=15),
                 },
                 SECRET_KEY,
@@ -407,17 +416,17 @@ def google_callback_service(db: Session, code: str, state: str) -> str:
         if not user.get("google_sub"):
             db.execute(
                 text("UPDATE users SET google_sub = :sub WHERE user_id = :uid"),
-                {"sub": google_sub, "uid": str(user["user_id"])},
+                {"sub": google_sub, "uid": user["user_id"]},
             )
-        update_last_login(db, str(user["user_id"]))
+        update_last_login(db, user["user_id"])
         db.commit()
 
         jwt_token = create_access_token({
-            "user_id":      str(user["user_id"]),
+            "user_id":      user["user_id"],
             "username":     user["username"],
             "role":         user["role"],
             "display_name": user["display_name"],
-            "patient_id":   str(user["patient_id"]),
+            "patient_id":   user["patient_id"],
             "staff_id":     None,
             "doctor_id":    None,
         })
@@ -449,19 +458,19 @@ def google_callback_service(db: Session, code: str, state: str) -> str:
                     "display_name": patient_row["full_name"],
                     "email":        email,
                     "google_sub":   google_sub,
-                    "patient_id":   str(patient_row["patient_id"]),
+                    "patient_id":   patient_row["patient_id"],
                 },
             ).mappings().one()
             user = dict(new_user)
-            update_last_login(db, str(user["user_id"]))
+            update_last_login(db, user["user_id"])
             db.commit()
 
             jwt_token = create_access_token({
-                "user_id":      str(user["user_id"]),
+                "user_id":      user["user_id"],
                 "username":     user["username"],
                 "role":         "PATIENT",
                 "display_name": user["display_name"],
-                "patient_id":   str(user["patient_id"]),
+                "patient_id":   user["patient_id"],
                 "staff_id":     None,
                 "doctor_id":    None,
             })

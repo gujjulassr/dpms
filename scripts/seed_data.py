@@ -9,7 +9,6 @@ Data overview:
   Staff         : 4  (1 ADMIN, 2 RECEPTIONIST, 1 DOCTOR-staff)
   Patients      : 20 (mix of demographics, risk levels)
   Sessions      : ~60 (30 days × 2 sessions × up to 6 doctors, sampled)
-  Slots         : auto-generated per session (~10-12 per session)
   Appointments  : ~120 (CONFIRMED, CANCELLED, COMPLETED, NO_SHOW)
   Cancellations : ~25 (mix of early / late, patient / staff)
   Waitlist      : ~15 (WAITING, CONFIRMED, EXPIRED, CANCELLED, NOTIFIED)
@@ -23,7 +22,6 @@ import sys
 import random
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 # ── path setup so imports resolve ────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,8 +60,8 @@ def days_from_now(n): return TODAY + timedelta(days=n)
 def clear_all(conn):
     print("  Clearing existing data...")
     tables = [
-        "notification_log", "cancellation_log", "waitlist",
-        "appointments", "slots", "sessions",
+        "doctor_ratings", "notification_log", "cancellation_log", "waitlist",
+        "appointments", "sessions",
         "patients", "staff", "doctors",
     ]
     for t in tables:
@@ -168,11 +166,12 @@ def seed_patients(conn):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4 — Sessions + Slots
+# STEP 4 — Sessions (availability calculated on-the-fly)
 # ─────────────────────────────────────────────────────────────────────────────
 # Sessions per doctor per day (only active doctors = first 5)
 # Range: 30 days ago → 14 days from now
 # Not every doctor works every day → realistic gaps
+# Time windows are computed in-memory for seeding appointments — no slots table.
 
 SESSION_CONFIG = {
     "MORNING":   (time(9,  0), time(13, 0)),
@@ -191,33 +190,30 @@ DOCTOR_WORKDAYS = [
     {1,3,5},           # kiran — Tue,Thu,Sat
 ]
 
-def generate_slots_for_session(conn, doctor_id, session_id, session_date, start_t, end_t, slot_mins):
-    """Mirrors the app's _generate_slots logic."""
-    slots = []
-    current = datetime.combine(session_date, start_t)
-    end_dt  = datetime.combine(session_date, end_t)
-    lunch_start_dt = datetime.combine(session_date, LUNCH_START)
-    lunch_end_dt   = datetime.combine(session_date, LUNCH_END)
+def compute_available_windows(session_start, session_end, slot_mins):
+    """Compute all possible time windows for a session (for seeding)."""
+    windows = []
+    current = datetime.combine(date.today(), session_start)
+    end_dt = datetime.combine(date.today(), session_end)
+    lunch_start_dt = datetime.combine(date.today(), LUNCH_START)
+    lunch_end_dt = datetime.combine(date.today(), LUNCH_END)
     step = timedelta(minutes=slot_mins)
 
     while current + step <= end_dt:
         slot_end = current + step
         overlaps = current < lunch_end_dt and slot_end > lunch_start_dt
-        status = "BLOCKED" if overlaps else "AVAILABLE"
-
-        row = fetchone(conn,
-            """INSERT INTO slots (doctor_id, session_id, slot_date, start_time, end_time, status)
-               VALUES (:did,:sid,:sdate,:st,:et,:status) RETURNING slot_id, start_time, status""",
-            dict(did=doctor_id, sid=session_id, sdate=session_date,
-                 st=current.time(), et=slot_end.time(), status=status))
-        slots.append(dict(row))
+        if not overlaps:
+            windows.append({"start_time": current.time(), "end_time": slot_end.time()})
         current = slot_end
-    return slots
+    return windows
 
 
-def seed_sessions_and_slots(conn, doctor_ids):
-    """Returns: {doctor_id: [{session_id, session_date, session_name, slots:[...]}]}"""
-    print("  Seeding sessions & slots...")
+def seed_sessions(conn, doctor_ids):
+    """
+    Returns: {doctor_id: [{session_id, session_date, session_name, slot_mins, windows:[...]}]}
+    No more slot generation — windows are computed for picking appointment times.
+    """
+    print("  Seeding sessions...")
     active_doctors = doctor_ids[:5]   # skip inactive mohan
     date_range = [TODAY - timedelta(days=d) for d in range(30, -1, -1)] + \
                  [TODAY + timedelta(days=d) for d in range(1, 15)]
@@ -226,7 +222,6 @@ def seed_sessions_and_slots(conn, doctor_ids):
     sessions_map = {d: [] for d in active_doctors}
 
     total_sessions = 0
-    total_slots = 0
 
     for i, doctor_id in enumerate(active_doctors):
         workdays = DOCTOR_WORKDAYS[i]
@@ -250,17 +245,18 @@ def seed_sessions_and_slots(conn, doctor_ids):
                        VALUES (:did,:sd,:sn,:st,:et,'OPEN') RETURNING session_id""",
                     dict(did=doctor_id, sd=d, sn=sname, st=st, et=et))
                 session_id = sess_row["session_id"]
-                slots = generate_slots_for_session(conn, doctor_id, session_id, d, st, et, slot_mins)
+                windows = compute_available_windows(st, et, slot_mins)
                 sessions_map[doctor_id].append({
                     "session_id": session_id,
                     "session_date": d,
                     "session_name": sname,
-                    "slots": slots,
+                    "slot_mins": slot_mins,
+                    "windows": windows,
+                    "booked_times": set(),  # track which times are booked
                 })
                 total_sessions += 1
-                total_slots += len(slots)
 
-    print(f"  ✓ {total_sessions} sessions, {total_slots} slots")
+    print(f"  ✓ {total_sessions} sessions")
     return sessions_map
 
 
@@ -268,41 +264,41 @@ def seed_sessions_and_slots(conn, doctor_ids):
 # STEP 5 — Appointments (rich mix of statuses)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def pick_available_slots(sessions_map, doctor_id, n, date_filter=None):
-    """Pick n AVAILABLE slots for a doctor (optionally filtered by date range)."""
+def pick_available_times(sessions_map, doctor_id, n, date_filter=None):
+    """Pick n available time windows for a doctor (optionally filtered by date range)."""
     result = []
     for sess in sessions_map.get(doctor_id, []):
         if date_filter and not date_filter(sess["session_date"]):
             continue
-        for sl in sess["slots"]:
-            if sl["status"] == "AVAILABLE":
+        for w in sess["windows"]:
+            st_key = w["start_time"].isoformat()
+            if st_key not in sess["booked_times"]:
                 result.append((sess["session_id"], sess["session_date"],
-                                sess["session_name"], sl["slot_id"], sl["start_time"]))
+                                sess["session_name"], w["start_time"], w["end_time"], sess))
     random.shuffle(result)
     return result[:n]
 
 
-def book_slot(conn, slot_id, patient_id, doctor_id, status="CONFIRMED",
+def book_time(conn, session_id, appointment_date, start_time, end_time,
+              patient_id, doctor_id, status="CONFIRMED",
               booked_at=None, cancelled_at=None, confirmed_at=None,
               r24=False, r2=False):
+    """Create appointment with time directly (no slot_id)."""
     appt_row = fetchone(conn,
         """INSERT INTO appointments
-           (slot_id, patient_id, doctor_id, status,
+           (session_id, patient_id, doctor_id, appointment_date,
+            start_time, end_time, status,
             reminder_24hr_sent, reminder_2hr_sent,
             confirmed_at, cancelled_at, booked_at)
-           VALUES (:sid,:pid,:did,:status,:r24,:r2,:cat2,:cat,:bat)
+           VALUES (:sessid,:pid,:did,:adate,:st,:et,:status,:r24,:r2,:cat2,:cat,:bat)
            RETURNING appointment_id""",
-        dict(sid=slot_id, pid=patient_id, did=doctor_id, status=status,
-             r24=r24, r2=r2,
+        dict(sessid=session_id, pid=patient_id, did=doctor_id,
+             adate=appointment_date, st=start_time, et=end_time,
+             status=status, r24=r24, r2=r2,
              cat2=confirmed_at,
              cat=cancelled_at,
              bat=booked_at or datetime.utcnow()))
     return str(appt_row["appointment_id"])
-
-
-def mark_slot(conn, slot_id, status):
-    conn.execute(text("UPDATE slots SET status=:s WHERE slot_id=:id"),
-                 {"s": status, "id": slot_id})
 
 
 def seed_appointments(conn, doctor_ids, patient_ids, sessions_map, staff_ids):
@@ -315,54 +311,68 @@ def seed_appointments(conn, doctor_ids, patient_ids, sessions_map, staff_ids):
     future = lambda d: d > TODAY
     today_ = lambda d: d == TODAY
 
+    def _book_and_track(times, patients, did, status, **kwargs):
+        """Helper to book times and track them."""
+        records = []
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
+                                status=status, **kwargs)
+            # Mark time as booked in the session tracker
+            sess["booked_times"].add(st.isoformat())
+            rec = dict(appt_id=appt_id, pid=pid, did=did,
+                       sdate=sdate, st=st, et=et,
+                       status=status, sess_id=sess_id)
+            records.append(rec)
+        return records
+
     # ── A. COMPLETED appointments (past, 3-4 per doctor) ─────────────────────
     for did in active_docs:
-        slots = pick_available_slots(sessions_map, did, 6, past)
+        times = pick_available_times(sessions_map, did, 6, past)
         patients = random.sample(patient_ids, min(6, len(patient_ids)))
-        for (sess_id, sdate, sname, slot_id, st), pid in zip(slots, patients):
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
             booked_dt = datetime.combine(sdate, time(8, 0)) - timedelta(days=1)
-            appt_id = book_slot(conn, slot_id, pid, did,
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
                                 status="COMPLETED",
                                 booked_at=booked_dt,
                                 confirmed_at=booked_dt,
                                 r24=True, r2=True)
-            mark_slot(conn, slot_id, "BOOKED")
-            appt_records.append(dict(appt_id=appt_id, slot_id=slot_id, pid=pid,
+            sess["booked_times"].add(st.isoformat())
+            appt_records.append(dict(appt_id=appt_id, pid=pid,
                                      did=did, sdate=sdate, st=st,
                                      status="COMPLETED", sess_id=sess_id))
 
     # ── B. CONFIRMED upcoming (today + future) ────────────────────────────────
     for did in active_docs:
-        slots = pick_available_slots(sessions_map, did, 8,
+        times = pick_available_times(sessions_map, did, 8,
                                      lambda d: d >= TODAY)
         patients = random.sample(patient_ids, min(8, len(patient_ids)))
-        for (sess_id, sdate, sname, slot_id, st), pid in zip(slots, patients):
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
             booked_dt = datetime.utcnow() - timedelta(hours=random.randint(1, 72))
-            appt_id = book_slot(conn, slot_id, pid, did,
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
                                 status="CONFIRMED",
                                 booked_at=booked_dt,
                                 confirmed_at=booked_dt,
                                 r24=(sdate < TODAY + timedelta(days=1)))
-            mark_slot(conn, slot_id, "BOOKED")
-            appt_records.append(dict(appt_id=appt_id, slot_id=slot_id, pid=pid,
+            sess["booked_times"].add(st.isoformat())
+            appt_records.append(dict(appt_id=appt_id, pid=pid,
                                      did=did, sdate=sdate, st=st,
                                      status="CONFIRMED", sess_id=sess_id))
 
     # ── C. CANCELLED past appointments (early cancellations — valid) ──────────
     cancel_early_records = []
     for did in active_docs[:3]:
-        slots = pick_available_slots(sessions_map, did, 4, past)
+        times = pick_available_times(sessions_map, did, 4, past)
         patients = random.sample(patient_ids, min(4, len(patient_ids)))
-        for (sess_id, sdate, sname, slot_id, st), pid in zip(slots, patients):
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
             booked_dt = datetime.combine(sdate, time(8,0)) - timedelta(days=2)
             cancel_dt = datetime.combine(sdate, time(8,0)) - timedelta(hours=6)
-            appt_id = book_slot(conn, slot_id, pid, did,
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
                                 status="CANCELLED",
                                 booked_at=booked_dt,
                                 confirmed_at=booked_dt,
                                 cancelled_at=cancel_dt)
-            # slot stays AVAILABLE after cancel
-            appt_records.append(dict(appt_id=appt_id, slot_id=slot_id, pid=pid,
+            # Time stays available after cancel (no slot to mark)
+            appt_records.append(dict(appt_id=appt_id, pid=pid,
                                      did=did, sdate=sdate, st=st,
                                      status="CANCELLED", late=False, sess_id=sess_id))
             cancel_early_records.append(appt_records[-1])
@@ -370,38 +380,35 @@ def seed_appointments(conn, doctor_ids, patient_ids, sessions_map, staff_ids):
     # ── D. CANCELLED — LATE cancellations (within 2hrs) ──────────────────────
     cancel_late_records = []
     for did in active_docs[2:5]:
-        slots = pick_available_slots(sessions_map, did, 3, past)
+        times = pick_available_times(sessions_map, did, 3, past)
         patients = random.sample(patient_ids, min(3, len(patient_ids)))
-        for (sess_id, sdate, sname, slot_id, st), pid in zip(slots, patients):
-            raw_st = str(st)
-            parts = raw_st.split(":")
-            slot_time_val = time(int(parts[0]), int(parts[1]))
-            slot_dt = datetime.combine(sdate, slot_time_val)
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
+            slot_dt = datetime.combine(sdate, st)
             cancel_dt = slot_dt - timedelta(minutes=45)   # 45 mins before = LATE
             booked_dt = slot_dt - timedelta(days=1)
-            appt_id = book_slot(conn, slot_id, pid, did,
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
                                 status="CANCELLED",
                                 booked_at=booked_dt,
                                 confirmed_at=booked_dt,
                                 cancelled_at=cancel_dt)
-            appt_records.append(dict(appt_id=appt_id, slot_id=slot_id, pid=pid,
+            appt_records.append(dict(appt_id=appt_id, pid=pid,
                                      did=did, sdate=sdate, st=st,
                                      status="CANCELLED", late=True, sess_id=sess_id))
             cancel_late_records.append(appt_records[-1])
 
     # ── E. NO_SHOW past appointments ──────────────────────────────────────────
     for did in active_docs[1:4]:
-        slots = pick_available_slots(sessions_map, did, 3, past)
+        times = pick_available_times(sessions_map, did, 3, past)
         patients = random.sample(patient_ids, min(3, len(patient_ids)))
-        for (sess_id, sdate, sname, slot_id, st), pid in zip(slots, patients):
+        for (sess_id, sdate, sname, st, et, sess), pid in zip(times, patients):
             booked_dt = datetime.combine(sdate, time(8,0)) - timedelta(days=1)
-            appt_id = book_slot(conn, slot_id, pid, did,
+            appt_id = book_time(conn, sess_id, sdate, st, et, pid, did,
                                 status="NO_SHOW",
                                 booked_at=booked_dt,
                                 confirmed_at=booked_dt,
                                 r24=True, r2=True)
-            mark_slot(conn, slot_id, "BOOKED")
-            appt_records.append(dict(appt_id=appt_id, slot_id=slot_id, pid=pid,
+            sess["booked_times"].add(st.isoformat())
+            appt_records.append(dict(appt_id=appt_id, pid=pid,
                                      did=did, sdate=sdate, st=st,
                                      status="NO_SHOW", sess_id=sess_id))
 
@@ -718,8 +725,8 @@ def main():
         patient_ids = seed_patients(conn)
         print()
 
-        print("[3/7] Sessions & Slots")
-        sessions_map = seed_sessions_and_slots(conn, doctor_ids)
+        print("[3/7] Sessions")
+        sessions_map = seed_sessions(conn, doctor_ids)
         print()
 
         print("[4/7] Appointments")
@@ -745,7 +752,6 @@ def main():
     print("  SELECT COUNT(*) FROM doctors;")
     print("  SELECT COUNT(*) FROM patients;")
     print("  SELECT COUNT(*) FROM sessions;")
-    print("  SELECT COUNT(*) FROM slots;")
     print("  SELECT COUNT(*) FROM appointments;")
     print("  SELECT status, COUNT(*) FROM appointments GROUP BY status;")
     print("  SELECT COUNT(*) FROM waitlist;")

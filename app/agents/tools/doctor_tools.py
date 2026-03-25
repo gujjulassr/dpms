@@ -6,8 +6,6 @@ Owns everything about doctor chatbot tools:
   execute() — dispatches tool name → doctor service call
 """
 
-from uuid import UUID
-
 from sqlalchemy.orm import Session
 
 from app.modules.doctors.schemas import DoctorCreate, DoctorUpdate
@@ -35,11 +33,11 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_doctor_by_id",
-            "description": "Look up a single doctor by their UUID.",
+            "description": "Look up a single doctor by their ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor UUID"},
+                    "doctor_id": {"type": "integer", "description": "Doctor ID"},
                 },
                 "required": ["doctor_id"],
             },
@@ -114,7 +112,7 @@ SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id":            {"type": "string", "description": "Doctor UUID (required)"},
+                    "doctor_id":            {"type": "integer", "description": "Doctor ID (required)"},
                     "full_name":            {"type": "string"},
                     "specialization":       {"type": "string"},
                     "email":                {"type": "string"},
@@ -135,7 +133,7 @@ def execute(name: str, args: dict, db: Session):
         return list_doctors_service(db)
 
     if name == "get_doctor_by_id":
-        return get_doctor_service(db, UUID(args["doctor_id"]))
+        return get_doctor_service(db, int(args["doctor_id"]))
 
     if name == "get_doctor_by_email":
         return get_doctor_by_email_service(db, args["email"])
@@ -165,4 +163,4 @@ def execute(name: str, args: dict, db: Session):
         if args.get("slot_duration_mins") is not None:   fields["slot_duration_mins"]   = args["slot_duration_mins"]
         if args.get("max_patients_per_day") is not None: fields["max_patients_per_day"] = args["max_patients_per_day"]
         if args.get("is_active") is not None:            fields["is_active"]            = args["is_active"]
-        return update_doctor_service(db, UUID(args["doctor_id"]), DoctorUpdate(**fields))
+        return update_doctor_service(db, int(args["doctor_id"]), DoctorUpdate(**fields))

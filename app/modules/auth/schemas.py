@@ -12,7 +12,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: str
     username: str
-    user_id: str
+    user_id: int
     display_name: str
 
 
@@ -21,9 +21,9 @@ class UserCreate(BaseModel):
     password: str
     role: str                        # ADMIN | RECEPTIONIST | DOCTOR | PATIENT
     display_name: str
-    staff_id:   Optional[str] = None
-    patient_id: Optional[str] = None
-    doctor_id:  Optional[str] = None
+    staff_id:   Optional[int] = None
+    patient_id: Optional[int] = None
+    doctor_id:  Optional[int] = None
 
 
 class GoogleRegisterRequest(BaseModel):
@@ -34,11 +34,11 @@ class GoogleRegisterRequest(BaseModel):
 
 
 class UserInfo(BaseModel):
-    user_id:      str
+    user_id:      int
     username:     str
     role:         str
     display_name: str
-    staff_id:     Optional[str] = None
-    patient_id:   Optional[str] = None
-    doctor_id:    Optional[str] = None
+    staff_id:     Optional[int] = None
+    patient_id:   Optional[int] = None
+    doctor_id:    Optional[int] = None
     is_active:    bool

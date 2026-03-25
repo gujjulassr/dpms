@@ -1,6 +1,9 @@
 -- =====================================================================
 -- DPAM — Analytics & Reporting Queries
 -- Run against: psql -U postgres -d dpam
+--
+-- NOTE: Slots table has been removed. Appointments now store
+-- appointment_date, start_time, end_time directly.
 -- =====================================================================
 
 
@@ -15,8 +18,6 @@ UNION ALL
 SELECT 'patients',                 COUNT(*) FROM patients
 UNION ALL
 SELECT 'sessions',                 COUNT(*) FROM sessions
-UNION ALL
-SELECT 'slots',                    COUNT(*) FROM slots
 UNION ALL
 SELECT 'appointments',             COUNT(*) FROM appointments
 UNION ALL
@@ -69,19 +70,18 @@ LIMIT  10;
 
 
 -- 2d. Daily appointment count (last 30 days + next 14 days)
-SELECT sl.slot_date,
-       TO_CHAR(sl.slot_date, 'Dy')       AS day_of_week,
-       COUNT(a.appointment_id)           AS appointments,
+SELECT a.appointment_date,
+       TO_CHAR(a.appointment_date, 'Dy')  AS day_of_week,
+       COUNT(a.appointment_id)            AS appointments,
        SUM(CASE WHEN a.status='CONFIRMED'  THEN 1 ELSE 0 END) AS confirmed,
        SUM(CASE WHEN a.status='COMPLETED'  THEN 1 ELSE 0 END) AS completed,
        SUM(CASE WHEN a.status='CANCELLED'  THEN 1 ELSE 0 END) AS cancelled,
        SUM(CASE WHEN a.status='NO_SHOW'    THEN 1 ELSE 0 END) AS no_show
-FROM   slots sl
-JOIN   appointments a ON a.slot_id = sl.slot_id
-WHERE  sl.slot_date BETWEEN CURRENT_DATE - INTERVAL '30 days'
-                        AND CURRENT_DATE + INTERVAL '14 days'
-GROUP  BY sl.slot_date
-ORDER  BY sl.slot_date;
+FROM   appointments a
+WHERE  a.appointment_date BETWEEN CURRENT_DATE - INTERVAL '30 days'
+                              AND CURRENT_DATE + INTERVAL '14 days'
+GROUP  BY a.appointment_date
+ORDER  BY a.appointment_date;
 
 
 -- ─────────────────────────────────────────────────────────────────
@@ -105,9 +105,8 @@ SELECT d.full_name,
        COUNT(a.appointment_id)  AS bookings_this_week
 FROM   doctors d
 JOIN   appointments a ON a.doctor_id = d.doctor_id
-JOIN   slots        sl ON sl.slot_id = a.slot_id
-WHERE  sl.slot_date BETWEEN DATE_TRUNC('week', CURRENT_DATE)
-                        AND DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'
+WHERE  a.appointment_date BETWEEN DATE_TRUNC('week', CURRENT_DATE)
+                              AND DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'
   AND  a.status IN ('CONFIRMED','COMPLETED')
 GROUP  BY d.doctor_id, d.full_name
 ORDER  BY bookings_this_week DESC;
@@ -117,13 +116,12 @@ ORDER  BY bookings_this_week DESC;
 -- SECTION 4: PEAK BOOKING HOURS
 -- ─────────────────────────────────────────────────────────────────
 
--- 4a. Which start_time slots are most booked (peak hours)?
-SELECT sl.start_time,
+-- 4a. Which start_time values are most booked (peak hours)?
+SELECT a.start_time,
        COUNT(a.appointment_id)  AS bookings
-FROM   slots sl
-JOIN   appointments a ON a.slot_id = sl.slot_id
+FROM   appointments a
 WHERE  a.status IN ('CONFIRMED','COMPLETED','NO_SHOW')
-GROUP  BY sl.start_time
+GROUP  BY a.start_time
 ORDER  BY bookings DESC
 LIMIT  10;
 
@@ -133,18 +131,16 @@ SELECT se.session_name,
        COUNT(a.appointment_id)                              AS total_bookings,
        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1)  AS pct
 FROM   sessions se
-JOIN   slots    sl ON sl.session_id = se.session_id
-JOIN   appointments a ON a.slot_id = sl.slot_id
+JOIN   appointments a ON a.session_id = se.session_id
 WHERE  a.status IN ('CONFIRMED','COMPLETED','NO_SHOW')
 GROUP  BY se.session_name;
 
 
 -- 4c. Bookings by day of week
-SELECT TO_CHAR(sl.slot_date, 'Day')       AS day_name,
-       EXTRACT(DOW FROM sl.slot_date)     AS dow_num,
-       COUNT(a.appointment_id)            AS bookings
-FROM   slots sl
-JOIN   appointments a ON a.slot_id = sl.slot_id
+SELECT TO_CHAR(a.appointment_date, 'Day')       AS day_name,
+       EXTRACT(DOW FROM a.appointment_date)     AS dow_num,
+       COUNT(a.appointment_id)                  AS bookings
+FROM   appointments a
 WHERE  a.status IN ('CONFIRMED','COMPLETED','NO_SHOW')
 GROUP  BY day_name, dow_num
 ORDER  BY dow_num;
@@ -197,54 +193,37 @@ ORDER  BY month;
 
 
 -- ─────────────────────────────────────────────────────────────────
--- SECTION 6: SLOT UTILISATION
+-- SECTION 6: SESSION UTILISATION (replaces old slot utilisation)
 -- ─────────────────────────────────────────────────────────────────
 
--- 6a. Overall slot utilisation rate
-SELECT
-    COUNT(*)                                                       AS total_slots,
-    SUM(CASE WHEN status='BLOCKED'   THEN 1 ELSE 0 END)            AS blocked_lunch,
-    SUM(CASE WHEN status='BOOKED'    THEN 1 ELSE 0 END)            AS booked,
-    SUM(CASE WHEN status='AVAILABLE' THEN 1 ELSE 0 END)            AS available,
-    SUM(CASE WHEN status='CANCELLED' THEN 1 ELSE 0 END)            AS cancelled,
-    ROUND(
-      SUM(CASE WHEN status='BOOKED' THEN 1 ELSE 0 END) * 100.0 /
-      NULLIF(SUM(CASE WHEN status != 'BLOCKED' THEN 1 ELSE 0 END), 0),
-    1)                                                             AS utilisation_pct
-FROM slots;
-
-
--- 6b. Utilisation per doctor
-SELECT d.full_name,
-       COUNT(sl.slot_id)                                          AS total_slots,
-       SUM(CASE WHEN sl.status='BOOKED'    THEN 1 ELSE 0 END)     AS booked,
-       SUM(CASE WHEN sl.status='AVAILABLE' THEN 1 ELSE 0 END)     AS available,
-       ROUND(
-         SUM(CASE WHEN sl.status='BOOKED' THEN 1 ELSE 0 END) * 100.0 /
-         NULLIF(SUM(CASE WHEN sl.status != 'BLOCKED' THEN 1 ELSE 0 END), 0),
-       1)                                                         AS utilisation_pct
-FROM   doctors d
-JOIN   slots sl ON sl.doctor_id = d.doctor_id
-GROUP  BY d.doctor_id, d.full_name
-ORDER  BY utilisation_pct DESC NULLS LAST;
-
-
--- 6c. Slots utilisation by session (past only)
+-- 6a. Appointments per session (booking density)
 SELECT se.session_name,
        se.session_date,
        d.full_name  AS doctor,
-       COUNT(sl.slot_id)                                                  AS total,
-       SUM(CASE WHEN sl.status IN ('BOOKED') THEN 1 ELSE 0 END)           AS booked,
-       SUM(CASE WHEN sl.status = 'AVAILABLE' THEN 1 ELSE 0 END)           AS available,
-       ROUND(SUM(CASE WHEN sl.status='BOOKED' THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(SUM(CASE WHEN sl.status!='BLOCKED' THEN 1 ELSE 0 END),0), 1) AS util_pct
+       COUNT(a.appointment_id)  AS total_appointments,
+       SUM(CASE WHEN a.status IN ('CONFIRMED','COMPLETED') THEN 1 ELSE 0 END) AS active,
+       SUM(CASE WHEN a.status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled
 FROM   sessions se
-JOIN   slots sl ON sl.session_id = se.session_id
 JOIN   doctors d ON d.doctor_id = se.doctor_id
+LEFT   JOIN appointments a ON a.session_id = se.session_id
 WHERE  se.session_date < CURRENT_DATE
 GROUP  BY se.session_id, se.session_name, se.session_date, d.full_name
-ORDER  BY se.session_date DESC, util_pct DESC
+ORDER  BY se.session_date DESC, total_appointments DESC
 LIMIT  30;
+
+
+-- 6b. Booking density per doctor (active appointments / sessions)
+SELECT d.full_name,
+       COUNT(DISTINCT se.session_id)   AS total_sessions,
+       COUNT(a.appointment_id)         AS total_appointments,
+       ROUND(COUNT(a.appointment_id)::numeric / NULLIF(COUNT(DISTINCT se.session_id), 0), 1)
+                                       AS avg_appointments_per_session
+FROM   doctors d
+JOIN   sessions se ON se.doctor_id = d.doctor_id
+LEFT   JOIN appointments a ON a.session_id = se.session_id
+  AND  a.status IN ('CONFIRMED','COMPLETED')
+GROUP  BY d.doctor_id, d.full_name
+ORDER  BY avg_appointments_per_session DESC NULLS LAST;
 
 
 -- ─────────────────────────────────────────────────────────────────
@@ -312,7 +291,7 @@ GROUP  BY channel;
 -- SECTION 9: DOCTOR WORKLOAD & SCHEDULE
 -- ─────────────────────────────────────────────────────────────────
 
--- 9a. Doctor sessions this week
+-- 9a. Doctor sessions this week with appointment counts
 SELECT d.full_name,
        d.specialization,
        se.session_date,
@@ -320,12 +299,11 @@ SELECT d.full_name,
        se.start_time,
        se.end_time,
        se.status,
-       COUNT(sl.slot_id)                                              AS total_slots,
-       SUM(CASE WHEN sl.status='BOOKED'    THEN 1 ELSE 0 END)         AS booked,
-       SUM(CASE WHEN sl.status='AVAILABLE' THEN 1 ELSE 0 END)         AS available
+       COUNT(a.appointment_id) FILTER (WHERE a.status IN ('CONFIRMED','COMPLETED'))  AS booked,
+       COUNT(a.appointment_id) FILTER (WHERE a.status = 'CANCELLED')                 AS cancelled
 FROM   sessions se
 JOIN   doctors d  ON d.doctor_id = se.doctor_id
-JOIN   slots   sl ON sl.session_id = se.session_id
+LEFT   JOIN appointments a ON a.session_id = se.session_id
 WHERE  se.session_date BETWEEN DATE_TRUNC('week', CURRENT_DATE)
                            AND DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'
 GROUP  BY d.doctor_id, d.full_name, d.specialization,
@@ -352,50 +330,35 @@ ORDER  BY total_appointments DESC;
 -- 10a. Today's confirmed appointments
 SELECT d.full_name      AS doctor,
        p.full_name      AS patient,
-       sl.start_time,
-       sl.end_time,
+       a.start_time,
+       a.end_time,
        se.session_name,
        a.status,
        a.reminder_24hr_sent,
        a.reminder_2hr_sent
 FROM   appointments a
-JOIN   slots sl ON sl.slot_id   = a.slot_id
-JOIN   sessions se ON se.session_id = sl.session_id
+JOIN   sessions se ON se.session_id = a.session_id
 JOIN   doctors  d  ON d.doctor_id  = a.doctor_id
 JOIN   patients p  ON p.patient_id = a.patient_id
-WHERE  sl.slot_date = CURRENT_DATE
+WHERE  a.appointment_date = CURRENT_DATE
   AND  a.status IN ('CONFIRMED','NO_SHOW')
-ORDER  BY sl.start_time;
+ORDER  BY a.start_time;
 
 
--- 10b. Today's available slots (still free to book)
-SELECT d.full_name  AS doctor,
-       se.session_name,
-       sl.start_time,
-       sl.end_time
-FROM   slots sl
-JOIN   sessions se ON se.session_id = sl.session_id
-JOIN   doctors  d  ON d.doctor_id   = sl.doctor_id
-WHERE  sl.slot_date = CURRENT_DATE
-  AND  sl.status = 'AVAILABLE'
-ORDER  BY d.full_name, sl.start_time;
-
-
--- 10c. Today's no-shows (reminder sent but patient didn't come)
+-- 10b. Today's no-shows (reminder sent but patient didn't come)
 SELECT p.full_name  AS patient,
        d.full_name  AS doctor,
-       sl.start_time,
+       a.start_time,
        a.appointment_id
 FROM   appointments a
-JOIN   slots    sl ON sl.slot_id   = a.slot_id
 JOIN   patients p  ON p.patient_id = a.patient_id
 JOIN   doctors  d  ON d.doctor_id  = a.doctor_id
-WHERE  sl.slot_date = CURRENT_DATE
+WHERE  a.appointment_date = CURRENT_DATE
   AND  a.status = 'NO_SHOW';
 
 
 -- ─────────────────────────────────────────────────────────────────
--- SECTION 11: FULL PATIENT HISTORY (parameterized — replace UUID)
+-- SECTION 11: FULL PATIENT HISTORY (parameterized — replace email)
 -- ─────────────────────────────────────────────────────────────────
 
 -- 11a. All appointments for a specific patient
@@ -403,19 +366,18 @@ WHERE  sl.slot_date = CURRENT_DATE
 SELECT a.appointment_id,
        d.full_name      AS doctor,
        d.specialization,
-       sl.slot_date,
-       sl.start_time,
+       a.appointment_date,
+       a.start_time,
        se.session_name,
        a.status,
        a.booked_at,
        a.cancelled_at
 FROM   appointments a
-JOIN   slots    sl ON sl.slot_id    = a.slot_id
-JOIN   sessions se ON se.session_id = sl.session_id
+JOIN   sessions se ON se.session_id = a.session_id
 JOIN   doctors  d  ON d.doctor_id   = a.doctor_id
 JOIN   patients p  ON p.patient_id  = a.patient_id
 WHERE  p.email = 'rahul.gupta@mail.com'   -- ← change to any patient email
-ORDER  BY sl.slot_date DESC;
+ORDER  BY a.appointment_date DESC;
 
 
 -- ─────────────────────────────────────────────────────────────────
@@ -428,14 +390,13 @@ SELECT p.full_name,
        p.late_cancellation_count,
        p.no_show_count,
        d.full_name   AS doctor,
-       sl.slot_date,
-       sl.start_time,
+       a.appointment_date,
+       a.start_time,
        a.status
 FROM   appointments a
 JOIN   patients p  ON p.patient_id = a.patient_id
-JOIN   slots    sl ON sl.slot_id   = a.slot_id
 JOIN   doctors  d  ON d.doctor_id  = a.doctor_id
-WHERE  sl.slot_date >= CURRENT_DATE
+WHERE  a.appointment_date >= CURRENT_DATE
   AND  a.status = 'CONFIRMED'
   AND  p.risk_score >= 0.3
-ORDER  BY p.risk_score DESC, sl.slot_date;
+ORDER  BY p.risk_score DESC, a.appointment_date;

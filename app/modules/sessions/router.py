@@ -1,6 +1,4 @@
 from datetime import date
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -9,7 +7,6 @@ from app.modules.sessions.schemas import SessionCreate, SessionUpdate
 from app.modules.sessions.service import (
     create_session_service,
     get_session_service,
-    get_session_slots_service,
     get_sessions_by_date_service,
     get_sessions_by_doctor_service,
     get_sessions_by_status_service,
@@ -36,7 +33,7 @@ def list_sessions(db: Session = Depends(get_db)):
 
 
 @router.get("/search/doctor", response_model=list)
-def get_by_doctor(doctor_id: UUID, db: Session = Depends(get_db)):
+def get_by_doctor(doctor_id: int, db: Session = Depends(get_db)):
     return get_sessions_by_doctor_service(db, doctor_id)
 
 
@@ -54,14 +51,6 @@ def get_by_status(status: str, db: Session = Depends(get_db)):
 def get_session(session_id: int, db: Session = Depends(get_db)):
     try:
         return get_session_service(db, session_id)
-    except LookupError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@router.get("/{session_id}/slots", response_model=list)
-def get_session_slots(session_id: int, db: Session = Depends(get_db)):
-    try:
-        return get_session_slots_service(db, session_id)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

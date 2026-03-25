@@ -5,7 +5,6 @@
 
 
 from typing import Dict, List
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -49,7 +48,7 @@ def get_patient_by_name_service(db:Session,full_name:str)->List[Dict]:
     
 
 
-def get_patient_service(db: Session, patient_id: UUID) -> Dict:
+def get_patient_service(db: Session, patient_id: int) -> Dict:
     patient = get_patient_by_id(db, patient_id)
     if not patient:
         raise LookupError("Patient not found")
@@ -69,7 +68,7 @@ def list_patients_service(db: Session) -> List[Dict]:
     return patients
 
 
-def delete_patient_service(db: Session, patient_id: UUID) -> dict:
+def delete_patient_service(db: Session, patient_id: int) -> dict:
     """Permanently delete a patient and their linked user account."""
     existing = get_patient_by_id(db, patient_id)
     if not existing:
@@ -79,13 +78,13 @@ def delete_patient_service(db: Session, patient_id: UUID) -> dict:
         db.commit()
         if not deleted:
             raise LookupError("Patient not found")
-        return {"deleted": True, "patient_id": str(patient_id), "full_name": existing["full_name"]}
+        return {"deleted": True, "patient_id": patient_id, "full_name": existing["full_name"]}
     except Exception as e:
         db.rollback()
         raise e
 
 
-def update_patient_service(db: Session, patient_id: UUID, payload: PatientUpdate) -> Dict:
+def update_patient_service(db: Session, patient_id: int, payload: PatientUpdate) -> Dict:
 
     existing_patient = get_patient_by_id(db, patient_id)
     if not existing_patient:
@@ -101,14 +100,14 @@ def update_patient_service(db: Session, patient_id: UUID, payload: PatientUpdate
     if "email" in update_data:
         patient_with_same_email = get_patient_by_email(db, update_data["email"])
 
-        if patient_with_same_email and str(patient_with_same_email["patient_id"]) != str(patient_id):
+        if patient_with_same_email and patient_with_same_email["patient_id"] != patient_id:
             raise ValueError("Another patient with this email already exists")
         
 
     if "phone" in update_data:
         patient_with_same_phone = get_patient_by_phone(db, update_data["phone"])
 
-        if patient_with_same_phone and str(patient_with_same_phone["patient_id"]) != str(patient_id):
+        if patient_with_same_phone and patient_with_same_phone["patient_id"] != patient_id:
             raise ValueError("Another patient with this phone already exists")
 
     merged_data = {

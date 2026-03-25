@@ -1,6 +1,5 @@
 from datetime import date, datetime
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -8,13 +7,13 @@ WaitlistStatus = Literal["WAITING", "NOTIFIED", "CONFIRMED", "EXPIRED", "CANCELL
 
 
 class WaitlistCreate(BaseModel):
-    patient_id: UUID
-    doctor_id: UUID
+    patient_id: int
+    doctor_id: int
     session_id: int
     waitlist_date: date
     priority: int = 2            # 2 = NORMAL  |  1 = EMERGENCY
     is_emergency: bool = False
-    emergency_declared_by: Optional[UUID] = None
+    emergency_declared_by: Optional[int] = None
     emergency_reason: Optional[str] = None
 
 
@@ -26,9 +25,9 @@ class WaitlistUpdate(BaseModel):
 
 
 class WaitlistResponse(BaseModel):
-    waitlist_id: UUID
-    patient_id: UUID
-    doctor_id: UUID
+    waitlist_id: int
+    patient_id: int
+    doctor_id: int
     session_id: int
     waitlist_date: date
     priority: int

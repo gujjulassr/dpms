@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -169,7 +168,7 @@ def _set_logged_in(token: str, payload: dict):
     st.session_state.display_name = payload.get("display_name", "")
     st.session_state.user_id      = payload.get("user_id", "")
     st.session_state.patient_id   = payload.get("patient_id")
-    st.session_state.session_id   = f"session-{payload.get('user_id','g')[:8]}"
+    st.session_state.session_id   = f"session-{str(payload.get('user_id','g'))[:8]}"
     st.session_state.messages     = []
     st.session_state.login_error  = ""
 
@@ -361,7 +360,7 @@ def _do_login(username: str, password: str):
             st.session_state.username     = data["username"]
             st.session_state.display_name = data["display_name"]
             st.session_state.user_id      = data["user_id"]
-            st.session_state.session_id   = f"session-{data['user_id'][:8]}"
+            st.session_state.session_id   = f"session-{str(data['user_id'])[:8]}"
             st.session_state.messages     = []
             st.session_state.login_error  = ""
             st.rerun()
@@ -439,7 +438,7 @@ def _role_hints(role: str) -> list:
         "RECEPTIONIST": [
             "Book an appointment for Amit with Dr. Arun tomorrow morning",
             "Cancel appointment <ID>",
-            "What slots does Dr. Priya have on Friday?",
+            "What times does Dr. Priya have on Friday?",
             "Show today's schedule",
         ],
         "DOCTOR": [
@@ -450,7 +449,7 @@ def _role_hints(role: str) -> list:
             "Book me an appointment with a cardiologist",
             "Show my upcoming appointments",
             "Cancel my appointment",
-            "What slots are available with Dr. Arun tomorrow?",
+            "What times are available with Dr. Arun tomorrow?",
         ],
     }.get(role, ["Ask me anything about the clinic."])
 

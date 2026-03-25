@@ -1,15 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
 def _serialize_value(value):
-    if isinstance(value, UUID):
-        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime)):
@@ -31,10 +28,10 @@ def create_doctor(db: Session, data: dict) -> dict:
     return _serialize_row(result.mappings().one())
 
 
-def get_doctor_by_id(db: Session, doctor_id: UUID) -> Optional[Dict]:
+def get_doctor_by_id(db: Session, doctor_id: int) -> Optional[Dict]:
     result = db.execute(
         text("SELECT * FROM doctors WHERE doctor_id = :doctor_id"),
-        {"doctor_id": str(doctor_id)}
+        {"doctor_id": doctor_id}
     )
     row = result.mappings().first()
     return _serialize_row(row) if row else None
@@ -81,7 +78,7 @@ def list_doctors(db: Session) -> List[Dict]:
     return [_serialize_row(row) for row in result.mappings().all()]
 
 
-def update_doctor(db: Session, doctor_id: UUID, data: dict) -> Optional[Dict]:
+def update_doctor(db: Session, doctor_id: int, data: dict) -> Optional[Dict]:
     query = text("""
         UPDATE doctors
         SET
@@ -96,6 +93,6 @@ def update_doctor(db: Session, doctor_id: UUID, data: dict) -> Optional[Dict]:
         WHERE doctor_id = :doctor_id
         RETURNING *
     """)
-    result = db.execute(query, {"doctor_id": str(doctor_id), **data})
+    result = db.execute(query, {"doctor_id": doctor_id, **data})
     row = result.mappings().first()
     return _serialize_row(row) if row else None

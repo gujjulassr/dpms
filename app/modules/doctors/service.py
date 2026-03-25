@@ -1,5 +1,4 @@
 from typing import Dict, List
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -32,7 +31,7 @@ def create_doctor_service(db: Session, payload: DoctorCreate) -> Dict:
         raise e
 
 
-def get_doctor_service(db: Session, doctor_id: UUID) -> Dict:
+def get_doctor_service(db: Session, doctor_id: int) -> Dict:
     doctor = get_doctor_by_id(db, doctor_id)
     if not doctor:
         raise LookupError("Doctor not found")
@@ -58,7 +57,7 @@ def list_doctors_service(db: Session) -> List[Dict]:
     return list_doctors(db)
 
 
-def update_doctor_service(db: Session, doctor_id: UUID, payload: DoctorUpdate) -> Dict:
+def update_doctor_service(db: Session, doctor_id: int, payload: DoctorUpdate) -> Dict:
     existing = get_doctor_by_id(db, doctor_id)
     if not existing:
         raise LookupError("Doctor not found")
@@ -69,12 +68,12 @@ def update_doctor_service(db: Session, doctor_id: UUID, payload: DoctorUpdate) -
 
     if "email" in update_data:
         clash = get_doctor_by_email(db, update_data["email"])
-        if clash and str(clash["doctor_id"]) != str(doctor_id):
+        if clash and clash["doctor_id"] != doctor_id:
             raise ValueError("Another doctor with this email already exists")
 
     if "phone" in update_data:
         clash = get_doctor_by_phone(db, update_data["phone"])
-        if clash and str(clash["doctor_id"]) != str(doctor_id):
+        if clash and clash["doctor_id"] != doctor_id:
             raise ValueError("Another doctor with this phone already exists")
 
     # Merge only changed fields on top of existing values

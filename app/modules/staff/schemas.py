@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -23,7 +22,7 @@ class StaffUpdate(BaseModel):
 
 
 class StaffResponse(BaseModel):
-    staff_id: UUID
+    staff_id: int
     full_name: str
     email: str
     phone: str

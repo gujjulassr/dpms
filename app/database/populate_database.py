@@ -288,151 +288,17 @@ def populate_database() -> None:
             )
             session_ids[row["key"]] = result.scalar_one()
 
-        slot_rows = [
-            {
-                "key": "slot_1",
-                "doctor_id": doctor_ids["meera.rao@dpam.com"],
-                "session_id": session_ids["meera_today_morning"],
-                "slot_date": today,
-                "start_time": time(9, 0),
-                "end_time": time(9, 15),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_2",
-                "doctor_id": doctor_ids["meera.rao@dpam.com"],
-                "session_id": session_ids["meera_today_morning"],
-                "slot_date": today,
-                "start_time": time(9, 15),
-                "end_time": time(9, 30),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_3",
-                "doctor_id": doctor_ids["meera.rao@dpam.com"],
-                "session_id": session_ids["meera_today_morning"],
-                "slot_date": today,
-                "start_time": time(9, 30),
-                "end_time": time(9, 45),
-                "status": "CANCELLED",
-            },
-            {
-                "key": "slot_4",
-                "doctor_id": doctor_ids["meera.rao@dpam.com"],
-                "session_id": session_ids["meera_today_afternoon"],
-                "slot_date": today,
-                "start_time": time(14, 0),
-                "end_time": time(14, 15),
-                "status": "AVAILABLE",
-            },
-            {
-                "key": "slot_5",
-                "doctor_id": doctor_ids["meera.rao@dpam.com"],
-                "session_id": session_ids["meera_today_afternoon"],
-                "slot_date": today,
-                "start_time": time(14, 15),
-                "end_time": time(14, 30),
-                "status": "BLOCKED",
-            },
-            {
-                "key": "slot_6",
-                "doctor_id": doctor_ids["arjun.nair@dpam.com"],
-                "session_id": session_ids["arjun_today_morning"],
-                "slot_date": today,
-                "start_time": time(10, 0),
-                "end_time": time(10, 20),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_7",
-                "doctor_id": doctor_ids["arjun.nair@dpam.com"],
-                "session_id": session_ids["arjun_today_morning"],
-                "slot_date": today,
-                "start_time": time(10, 20),
-                "end_time": time(10, 40),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_8",
-                "doctor_id": doctor_ids["arjun.nair@dpam.com"],
-                "session_id": session_ids["arjun_today_afternoon"],
-                "slot_date": today,
-                "start_time": time(15, 0),
-                "end_time": time(15, 20),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_9",
-                "doctor_id": doctor_ids["kavya.menon@dpam.com"],
-                "session_id": session_ids["kavya_tomorrow_morning"],
-                "slot_date": today + timedelta(days=1),
-                "start_time": time(9, 30),
-                "end_time": time(10, 0),
-                "status": "AVAILABLE",
-            },
-            {
-                "key": "slot_10",
-                "doctor_id": doctor_ids["kavya.menon@dpam.com"],
-                "session_id": session_ids["kavya_tomorrow_morning"],
-                "slot_date": today + timedelta(days=1),
-                "start_time": time(10, 0),
-                "end_time": time(10, 30),
-                "status": "AVAILABLE",
-            },
-            {
-                "key": "slot_11",
-                "doctor_id": doctor_ids["kavya.menon@dpam.com"],
-                "session_id": session_ids["kavya_tomorrow_afternoon"],
-                "slot_date": today + timedelta(days=1),
-                "start_time": time(14, 0),
-                "end_time": time(14, 30),
-                "status": "BOOKED",
-            },
-            {
-                "key": "slot_12",
-                "doctor_id": doctor_ids["kavya.menon@dpam.com"],
-                "session_id": session_ids["kavya_tomorrow_afternoon"],
-                "slot_date": today + timedelta(days=1),
-                "start_time": time(14, 30),
-                "end_time": time(15, 0),
-                "status": "AVAILABLE",
-            },
-        ]
-
-        slot_ids = {}
-        for row in slot_rows:
-            result = db.execute(
-                text(
-                    """
-                    INSERT INTO slots (
-                        doctor_id,
-                        session_id,
-                        slot_date,
-                        start_time,
-                        end_time,
-                        status
-                    )
-                    VALUES (
-                        :doctor_id,
-                        :session_id,
-                        :slot_date,
-                        :start_time,
-                        :end_time,
-                        :status
-                    )
-                    RETURNING slot_id
-                    """
-                ),
-                row,
-            )
-            slot_ids[row["key"]] = result.scalar_one()
+        # No more slots table — appointments store time directly
 
         appointment_rows = [
             {
                 "key": "appt_1",
-                "slot_id": slot_ids["slot_1"],
+                "session_id": session_ids["meera_today_morning"],
                 "patient_id": patient_ids["priya.singh@gmail.com"],
                 "doctor_id": doctor_ids["meera.rao@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(9, 0),
+                "end_time": time(9, 15),
                 "status": "CONFIRMED",
                 "reminder_24hr_sent": True,
                 "reminder_2hr_sent": False,
@@ -441,9 +307,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_2",
-                "slot_id": slot_ids["slot_2"],
+                "session_id": session_ids["meera_today_morning"],
                 "patient_id": patient_ids["rahul.verma@gmail.com"],
                 "doctor_id": doctor_ids["meera.rao@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(9, 15),
+                "end_time": time(9, 30),
                 "status": "COMPLETED",
                 "reminder_24hr_sent": True,
                 "reminder_2hr_sent": True,
@@ -452,9 +321,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_3",
-                "slot_id": slot_ids["slot_3"],
+                "session_id": session_ids["meera_today_morning"],
                 "patient_id": patient_ids["rohan.gupta@gmail.com"],
                 "doctor_id": doctor_ids["meera.rao@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(9, 30),
+                "end_time": time(9, 45),
                 "status": "CANCELLED",
                 "reminder_24hr_sent": True,
                 "reminder_2hr_sent": True,
@@ -463,9 +335,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_4",
-                "slot_id": slot_ids["slot_6"],
+                "session_id": session_ids["arjun_today_morning"],
                 "patient_id": patient_ids["vikram.das@gmail.com"],
                 "doctor_id": doctor_ids["arjun.nair@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(10, 0),
+                "end_time": time(10, 20),
                 "status": "NO_SHOW",
                 "reminder_24hr_sent": True,
                 "reminder_2hr_sent": True,
@@ -474,9 +349,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_5",
-                "slot_id": slot_ids["slot_7"],
+                "session_id": session_ids["arjun_today_morning"],
                 "patient_id": patient_ids["sneha.reddy@gmail.com"],
                 "doctor_id": doctor_ids["arjun.nair@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(10, 20),
+                "end_time": time(10, 40),
                 "status": "CONFIRMED",
                 "reminder_24hr_sent": False,
                 "reminder_2hr_sent": False,
@@ -485,9 +363,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_6",
-                "slot_id": slot_ids["slot_8"],
+                "session_id": session_ids["arjun_today_afternoon"],
                 "patient_id": patient_ids["manoj.pillai@gmail.com"],
                 "doctor_id": doctor_ids["arjun.nair@dpam.com"],
+                "appointment_date": today,
+                "start_time": time(15, 0),
+                "end_time": time(15, 20),
                 "status": "CONFIRMED",
                 "reminder_24hr_sent": True,
                 "reminder_2hr_sent": True,
@@ -496,9 +377,12 @@ def populate_database() -> None:
             },
             {
                 "key": "appt_7",
-                "slot_id": slot_ids["slot_11"],
+                "session_id": session_ids["kavya_tomorrow_afternoon"],
                 "patient_id": patient_ids["aisha.khan@gmail.com"],
                 "doctor_id": doctor_ids["kavya.menon@dpam.com"],
+                "appointment_date": today + timedelta(days=1),
+                "start_time": time(14, 0),
+                "end_time": time(14, 30),
                 "status": "CONFIRMED",
                 "reminder_24hr_sent": False,
                 "reminder_2hr_sent": False,
@@ -513,9 +397,12 @@ def populate_database() -> None:
                 text(
                     """
                     INSERT INTO appointments (
-                        slot_id,
+                        session_id,
                         patient_id,
                         doctor_id,
+                        appointment_date,
+                        start_time,
+                        end_time,
                         status,
                         reminder_24hr_sent,
                         reminder_2hr_sent,
@@ -523,9 +410,12 @@ def populate_database() -> None:
                         cancelled_at
                     )
                     VALUES (
-                        :slot_id,
+                        :session_id,
                         :patient_id,
                         :doctor_id,
+                        :appointment_date,
+                        :start_time,
+                        :end_time,
                         :status,
                         :reminder_24hr_sent,
                         :reminder_2hr_sent,

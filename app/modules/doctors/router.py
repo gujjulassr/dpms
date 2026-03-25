@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -50,7 +48,7 @@ def get_by_email(email: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{doctor_id}", response_model=dict)
-def get_doctor(doctor_id: UUID, db: Session = Depends(get_db)):
+def get_doctor(doctor_id: int, db: Session = Depends(get_db)):
     try:
         return get_doctor_service(db, doctor_id)
     except LookupError as e:
@@ -58,7 +56,7 @@ def get_doctor(doctor_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/{doctor_id}", response_model=dict)
-def update_doctor(doctor_id: UUID, payload: DoctorUpdate, db: Session = Depends(get_db)):
+def update_doctor(doctor_id: int, payload: DoctorUpdate, db: Session = Depends(get_db)):
     try:
         return update_doctor_service(db, doctor_id, payload)
     except LookupError as e:

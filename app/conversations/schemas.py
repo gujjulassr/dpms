@@ -29,7 +29,7 @@ class ConversationMessage(BaseModel):
 
 class ConversationSession(BaseModel):
     session_id: str
-    user_id: str
+    user_id: int
     role: RoleType
     summary: Optional[str] = None
     messages: List[ConversationMessage] = Field(default_factory=list)

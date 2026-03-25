@@ -44,10 +44,10 @@ def _doctor_label(name: str) -> str:
 
 def _log_notification(
     db: Session,
-    patient_id: str,
+    patient_id: int,
     notification_type: str,
-    appointment_id: Optional[str] = None,
-    waitlist_id: Optional[str] = None,
+    appointment_id: Optional[int] = None,
+    waitlist_id: Optional[int] = None,
 ) -> None:
     db.execute(
         text("""
@@ -65,7 +65,7 @@ def _log_notification(
     )
 
 
-def _make_review_token(appointment_id: str, patient_id: str, doctor_id: str) -> str:
+def _make_review_token(appointment_id: int, patient_id: int, doctor_id: int) -> str:
     """Return a signed JWT review token valid for 7 days."""
     payload = {
         "purpose":        "doctor_review",
@@ -78,19 +78,28 @@ def _make_review_token(appointment_id: str, patient_id: str, doctor_id: str) -> 
 
 
 # ── Public notification functions ─────────────────────────────────────────────
+# These accept a `slot` dict for backward compatibility.
+# The dict just needs "slot_date" (or "appointment_date") and "start_time".
+
+def _get_date(slot: dict) -> str:
+    return str(slot.get("slot_date") or slot.get("appointment_date", ""))
+
+def _get_time(slot: dict) -> str:
+    return str(slot.get("start_time", ""))[:5]
+
 
 def notify_booking_confirmed(
     db: Session,
     patient: dict,
     doctor: dict,
     slot: dict,
-    appointment_id: str,
+    appointment_id: int,
 ) -> None:
     """Send booking confirmation email with .ics calendar invite, then log it."""
     try:
         doctor_label = _doctor_label(doctor["full_name"])
-        date_str = str(slot["slot_date"])
-        time_str = str(slot["start_time"])[:5]   # HH:MM
+        date_str = _get_date(slot)
+        time_str = _get_time(slot)
 
         html = templates.booking_confirmation(
             patient_name   = patient["full_name"],
@@ -110,8 +119,8 @@ def notify_booking_confirmed(
                     f"Patient: {patient['full_name']}"
                 ),
                 location       = "DPMS Clinic",
-                slot_date      = slot["slot_date"],
-                start_time     = slot["start_time"],
+                slot_date      = date_str,
+                start_time     = time_str,
                 duration_mins  = 30,
                 organizer_email= _SMTP_FROM_EMAIL,
                 attendee_email = patient.get("email", ""),
@@ -136,20 +145,23 @@ def notify_cancellation(
     patient: dict,
     doctor: dict,
     slot: dict,
-    appointment_id: str,
+    appointment_id: int,
 ) -> None:
     """Send cancellation email and log it."""
     try:
         doctor_label = _doctor_label(doctor["full_name"])
+        date_str = _get_date(slot)
+        time_str = _get_time(slot)
+
         html = templates.cancellation(
             patient_name = patient["full_name"],
             doctor_name  = doctor["full_name"],
-            date         = str(slot["slot_date"]),
-            time_str     = str(slot["start_time"])[:5],
+            date         = date_str,
+            time_str     = time_str,
         )
         send_email(
             to        = patient.get("email", ""),
-            subject   = f"Appointment Cancelled — {doctor_label} on {slot['slot_date']}",
+            subject   = f"Appointment Cancelled — {doctor_label} on {date_str}",
             html_body = html,
         )
         _log_notification(db, patient["patient_id"], "CANCELLATION", appointment_id=appointment_id)
@@ -162,14 +174,14 @@ def notify_waitlist_allocated(
     patient: dict,
     doctor: dict,
     slot: dict,
-    waitlist_id: str,
-    appointment_id: Optional[str] = None,
+    waitlist_id: int,
+    appointment_id: Optional[int] = None,
 ) -> None:
     """Send waitlist-slot-confirmed email with .ics calendar invite, then log it."""
     try:
         doctor_label = _doctor_label(doctor["full_name"])
-        date_str = str(slot["slot_date"])
-        time_str = str(slot["start_time"])[:5]
+        date_str = _get_date(slot)
+        time_str = _get_time(slot)
 
         html = templates.waitlist_allocated(
             patient_name   = patient["full_name"],
@@ -189,8 +201,8 @@ def notify_waitlist_allocated(
                     f"Patient: {patient['full_name']}"
                 ),
                 location       = "DPMS Clinic",
-                slot_date      = slot["slot_date"],
-                start_time     = slot["start_time"],
+                slot_date      = date_str,
+                start_time     = time_str,
                 duration_mins  = 30,
                 organizer_email= _SMTP_FROM_EMAIL,
                 attendee_email = patient.get("email", ""),
@@ -206,6 +218,9 @@ def notify_waitlist_allocated(
             ics_filename = "appointment.ics",
         )
         _log_notification(db, patient["patient_id"], "WAITLIST_NOTIFY", waitlist_id=waitlist_id)
+        # Keep booking-confirm audit complete even when booking originates from waitlist allocation.
+        if appointment_id:
+            _log_notification(db, patient["patient_id"], "BOOKING_CONFIRM", appointment_id=appointment_id)
     except Exception as exc:
         log.warning("notify_waitlist_allocated failed: %s", exc)
 
@@ -220,12 +235,15 @@ def notify_2hr_reminder(
     """Send 2-hour reminder email and log it."""
     try:
         doctor_label = _doctor_label(doctor["full_name"])
+        date_str = _get_date(slot)
+        time_str = _get_time(slot)
+
         html = templates.reminder_2hr(
             patient_name   = patient["full_name"],
             doctor_name    = doctor["full_name"],
             specialization = doctor.get("specialization", ""),
-            date           = str(slot["slot_date"]),
-            time_str       = str(slot["start_time"])[:5],
+            date           = date_str,
+            time_str       = time_str,
         )
         send_email(
             to        = patient.get("email", ""),
@@ -242,7 +260,7 @@ def notify_review_request(
     patient: dict,
     doctor: dict,
     slot: dict,
-    appointment_id: str,
+    appointment_id: int,
 ) -> None:
     """
     Send a polite post-appointment review request email.
@@ -254,12 +272,15 @@ def notify_review_request(
         token = _make_review_token(appointment_id, patient["patient_id"], doctor["doctor_id"])
         rating_url = f"{_API_URL}/rate/{token}"
 
+        date_str = _get_date(slot)
+        time_str = _get_time(slot)
+
         html = templates.review_request(
             patient_name   = patient["full_name"],
             doctor_name    = doctor["full_name"],
             specialization = doctor.get("specialization", ""),
-            date           = str(slot["slot_date"]),
-            time_str       = str(slot["start_time"])[:5],
+            date           = date_str,
+            time_str       = time_str,
             rating_url     = rating_url,
         )
         send_email(
@@ -287,40 +308,39 @@ def send_pending_2hr_reminders() -> None:
 
     db: Session = get_session()
     try:
+        # No more JOIN with slots — time data is on the appointment itself
         rows = db.execute(text("""
             SELECT
                 a.appointment_id,
                 a.patient_id,
                 a.doctor_id,
-                a.slot_id,
+                a.appointment_date,
+                a.start_time,
                 p.full_name  AS patient_name,
                 p.email      AS patient_email,
                 d.full_name  AS doctor_name,
-                d.specialization,
-                s.slot_date,
-                s.start_time
+                d.specialization
             FROM appointments a
             JOIN patients p ON p.patient_id = a.patient_id
             JOIN doctors  d ON d.doctor_id  = a.doctor_id
-            JOIN slots    s ON s.slot_id    = a.slot_id
             WHERE a.status              = 'CONFIRMED'
               AND a.reminder_2hr_sent   = FALSE
-              AND (s.slot_date::timestamp + s.start_time::time)
+              AND (a.appointment_date::timestamp + a.start_time::time)
                   BETWEEN NOW() AND (NOW() + INTERVAL '2 hours 15 minutes')
         """)).mappings().all()
 
         for row in rows:
             r = dict(row)
             patient = {"full_name": r["patient_name"], "email": r["patient_email"],
-                       "patient_id": str(r["patient_id"])}
+                       "patient_id": r["patient_id"]}
             doctor  = {"full_name": r["doctor_name"], "specialization": r["specialization"]}
-            slot    = {"slot_date": r["slot_date"], "start_time": r["start_time"]}
+            slot    = {"slot_date": r["appointment_date"], "start_time": r["start_time"]}
 
-            notify_2hr_reminder(db, patient, doctor, slot, str(r["appointment_id"]))
+            notify_2hr_reminder(db, patient, doctor, slot, r["appointment_id"])
 
             db.execute(
                 text("UPDATE appointments SET reminder_2hr_sent = TRUE WHERE appointment_id = :aid"),
-                {"aid": str(r["appointment_id"])},
+                {"aid": r["appointment_id"]},
             )
             db.commit()
             log.info("2hr reminder sent → %s (%s)", r["patient_email"], r["appointment_id"])
@@ -335,7 +355,7 @@ def send_pending_2hr_reminders() -> None:
 def mark_completed_and_send_reviews() -> None:
     """
     Scheduler job (every 10 minutes):
-      1. Finds CONFIRMED appointments whose slot time has now passed.
+      1. Finds CONFIRMED appointments whose time has now passed.
       2. Marks them COMPLETED.
       3. Sends a review-request email to each patient (once).
 
@@ -345,31 +365,30 @@ def mark_completed_and_send_reviews() -> None:
 
     db: Session = get_session()
     try:
+        # No more JOIN with slots — time data is on the appointment itself
         rows = db.execute(text("""
             SELECT
                 a.appointment_id,
                 a.patient_id,
                 a.doctor_id,
-                a.slot_id,
                 a.review_sent,
+                a.appointment_date,
+                a.start_time,
                 p.full_name     AS patient_name,
                 p.email         AS patient_email,
                 d.full_name     AS doctor_name,
-                d.doctor_id     AS doctor_uuid,
-                d.specialization,
-                s.slot_date,
-                s.start_time
+                d.doctor_id     AS doctor_id_val,
+                d.specialization
             FROM appointments a
             JOIN patients p ON p.patient_id = a.patient_id
             JOIN doctors  d ON d.doctor_id  = a.doctor_id
-            JOIN slots    s ON s.slot_id    = a.slot_id
             WHERE a.status = 'CONFIRMED'
-              AND (s.slot_date::timestamp + s.start_time::time) < NOW()
+              AND (a.appointment_date::timestamp + a.start_time::time) < NOW()
         """)).mappings().all()
 
         for row in rows:
             r = dict(row)
-            aid = str(r["appointment_id"])
+            aid = r["appointment_id"]
 
             # Mark appointment COMPLETED
             db.execute(
@@ -387,14 +406,14 @@ def mark_completed_and_send_reviews() -> None:
                 patient = {
                     "full_name":  r["patient_name"],
                     "email":      r["patient_email"],
-                    "patient_id": str(r["patient_id"]),
+                    "patient_id": r["patient_id"],
                 }
                 doctor = {
                     "full_name":      r["doctor_name"],
-                    "doctor_id":      str(r["doctor_uuid"]),
+                    "doctor_id":      r["doctor_id_val"],
                     "specialization": r["specialization"],
                 }
-                slot = {"slot_date": r["slot_date"], "start_time": r["start_time"]}
+                slot = {"slot_date": r["appointment_date"], "start_time": r["start_time"]}
 
                 notify_review_request(db, patient, doctor, slot, aid)
 

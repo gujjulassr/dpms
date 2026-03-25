@@ -10,7 +10,6 @@ import json
 import re
 from datetime import date
 from typing import Optional
-from uuid import UUID
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
@@ -44,6 +43,28 @@ MAX_TOOL_ROUNDS = 8
 # All tool modules — each owns its own SCHEMAS and execute()
 TOOL_MODULES = [patient_tools, doctor_tools, staff_tools, session_tools, appointment_tools, waitlist_tools]
 ALL_SCHEMAS = [schema for m in TOOL_MODULES for schema in m.SCHEMAS]
+
+
+def _format_patient_rows(rows: list[dict]) -> str:
+    if not rows:
+        return "No patient records found."
+
+    lines = [f"Found {len(rows)} patient record(s):"]
+    for i, row in enumerate(rows, start=1):
+        lines.append(
+            (
+                f"{i}. ID: {row.get('patient_id')} | "
+                f"Name: {row.get('full_name')} | "
+                f"Email: {row.get('email')} | "
+                f"Phone: {row.get('phone')} | "
+                f"DOB: {row.get('date_of_birth')} | "
+                f"Cancellations: {row.get('cancellation_count')} | "
+                f"Late cancellations: {row.get('late_cancellation_count')} | "
+                f"No-shows: {row.get('no_show_count')} | "
+                f"Risk score: {row.get('risk_score')}"
+            )
+        )
+    return "\n".join(lines)
 
 
 def _run_tool(name: str, args: dict, db: Session):
@@ -108,19 +129,20 @@ def _system_prompt(role: str) -> str:
         "11. A session is different from an appointment. If the user asks to cancel or close a session, use session tools such as cancel_session or update_session, not cancel_appointment.\n"
         "12. If more than one session matches the user's request, ask a clarification question such as morning or afternoon, or which date.\n"
         "13. BOOKING FLOW — when a patient asks to book at a specific time and date:\n"
-        "    a. Call suggest_available_slot with doctor_id, date, and preferred_time.\n"
-        "    b. If exact slot is available (same_session=True, exact not None) → book it directly, no questions.\n"
-        "    c. If same_session=True but exact is None → slot taken but another slot is free in the same session. Ask if they want to book that nearby slot.\n"
+        "    a. Call suggest_available_time with doctor_id, date, and preferred_time.\n"
+        "    b. If exact time is available (same_session=True, exact not None) → book it directly, no questions.\n"
+        "    c. If same_session=True but exact is None → time taken but another time is free in the same session. Ask if they want to book that nearby time.\n"
         "    d. If same_session=False → the entire requested session is fully booked. In ONE message offer both:\n"
-        "       - Waitlist for the session they originally wanted (use session_name e.g. MORNING, not session_id). Always add: 'Note: waitlist only confirms if someone cancels at least 2 hours before their slot.'\n"
-        "       - The earliest available slot found (suggested) as a direct booking option.\n"
+        "       - Waitlist for the ORIGINAL session (use original_session_name from the response, e.g. MORNING). Ask clearly: 'Would you like me to add you to the waitlist for the <original_session_name> session?' Always add: 'Note: waitlist only confirms if someone cancels at least 2 hours before their appointment.' Use original_session_id for the waitlist call.\n"
+        "       - The earliest available time found (suggested) as a DIRECT BOOKING option in the other session.\n"
+        "       IMPORTANT: The waitlist is for the original_session (where the preferred time was), NOT the suggested session (which already has availability). Never offer waitlist for a session that has open times.\n"
         "       Patient can choose one, both, or neither. Never auto-book or auto-waitlist.\n"
-        "    e. If suggested is None → no slots available for that doctor on that date at all. Just say so.\n"
-        "14. BOOKING WITHOUT A TIME — if the patient asks for earliest available with no specific time or asks for the soonest/next/earliest appointment without a date, use get_earliest_available_slot_by_doctor.\n"
-        "15. Do NOT offer waitlist for the suggested/alternative session — it already has available slots so there is nothing to wait for.\n"
+        "    e. If suggested is None → no available times for that doctor on that date at all. Just say so.\n"
+        "14. BOOKING WITHOUT A TIME — if the patient asks for earliest available with no specific time or asks for the soonest/next/earliest appointment without a date, use get_earliest_available_time_by_doctor.\n"
+        "15. Do NOT offer waitlist for the suggested/alternative session — it already has available times so there is nothing to wait for.\n"
         "16. For PATIENT users, doctor discovery is public but contact details are not. Only present doctor name and specialization to patients unless the system explicitly allows more.\n"
-        "17. If the user asks for all available slots, open slots, active slots, or free times for a doctor on a date, use get_available_slots_by_doctor_and_date. Use suggest_available_slot only for booking one requested date/time.\n"
-        "18. If the user asks whether a doctor or specialization is available today, first identify the doctor, then check sessions or available slots for today.\n"
+        "17. If the user asks for all available times, open times, or free times for a doctor on a date, use get_available_times_by_doctor_and_date. Use suggest_available_time only for booking one requested date/time.\n"
+        "18. If the user asks whether a doctor or specialization is available today, first identify the doctor, then check sessions or available times for today.\n"
         "19. If the user mentions a specialist term like cardiologist, dermatologist, or pediatrician, prefer get_doctors_by_specialization over name search.\n"
         "20. PATIENT IDENTITY RULE — when the role is PATIENT, the logged-in patient's patient_id is "
         "automatically injected into every booking, cancellation, and lookup tool. "
@@ -128,11 +150,21 @@ def _system_prompt(role: str) -> str:
         "Just proceed directly — their identity is already known. "
         "If a tool returns 'provide a valid patient_id', the system will supply it; do not ask the user.\n"
         "21. When a PATIENT asks to book and no session exists on the requested date, do NOT say 'no sessions scheduled'. "
-        "Instead, immediately call get_earliest_available_slot_by_doctor to find the next available date and offer it.\n"
+        "Instead, immediately call get_earliest_available_time_by_doctor to find the next available date and offer it.\n"
         "22. ADMIN DELETE RULE — when an ADMIN says 'remove', 'delete', 'erase', or 'permanently remove' a patient, "
         "ALWAYS use the delete_patient tool. NEVER rename, anonymize, or set the name to '[REDACTED]'. "
         "First look up the patient by name or ID to confirm, then call delete_patient with their patient_id. "
         "Update/rename is ONLY for legitimate data corrections — never for deletion requests.\n"
+        "23. STAFF BOOKING FLOW (ADMIN / RECEPTIONIST) — when asked to book and no session exists for the requested date:\n"
+        "    a. If the doctor is inactive (is_active=false), activate them first with update_doctor(is_active=true).\n"
+        "    b. Create a session with create_session: use MORNING (start_time=09:00, end_time=13:00) if the requested time is before 13:00, else AFTERNOON (start_time=14:00, end_time=18:00).\n"
+        "    c. Once the session is created, immediately call suggest_available_time and then create_appointment.\n"
+        "    d. In your final reply confirm all steps taken: doctor activated (if needed), session created, appointment booked.\n"
+        "    Do NOT stop and ask the user whether to create a session — just do it automatically.\n"
+        "24. WHO IS AVAILABLE TODAY — when asked which doctors are available today, are working today, or have sessions today:\n"
+        "    Call get_sessions_by_date with today's date. The result includes doctor_name, specialization, session_name, start_time, end_time, and status.\n"
+        "    List only sessions with status=OPEN. If none exist, say no doctors have open sessions today.\n"
+        "    Do NOT try to call get_available_times_by_doctor_and_date for every doctor — that causes too many tool calls.\n"
     )
 
 
@@ -207,12 +239,12 @@ def _inject_role_scoped_ids(role: str, action_name: str, action_args: dict, auth
             "get_waitlist_by_patient",
         }
         if patient_id and action_name in PATIENT_SCOPED_TOOLS:
-            scoped_args["patient_id"] = str(patient_id)
+            scoped_args["patient_id"] = patient_id
 
     if role == "DOCTOR":
         doctor_id = auth_user.get("doctor_id")
         if doctor_id and action_name in {"get_appointments_by_doctor", "get_sessions_by_doctor"}:
-            scoped_args["doctor_id"] = str(doctor_id)
+            scoped_args["doctor_id"] = doctor_id
 
     return scoped_args
 
@@ -261,7 +293,7 @@ def _maybe_handle_ambiguous_session_cancel(db: Session, payload: AgentChatReques
         return None
 
     doctor = doctors[0]
-    sessions = get_sessions_by_doctor_service(db, UUID(doctor["doctor_id"]))
+    sessions = get_sessions_by_doctor_service(db, doctor["doctor_id"])
     sessions = [session for session in sessions if session["status"] != "CLOSED"]
 
     session_name = _mentioned_session_name(payload.message)
@@ -344,6 +376,15 @@ def process_agent_chat(db: Session, payload: AgentChatRequest) -> AgentChatRespo
             # No tool needed — return the conversational reply
             if choice.finish_reason != "tool_calls":
                 final_text = choice.message.content or "How can I help you?"
+
+                # Keep admin-style patient list responses explicit and data-rich.
+                if (
+                    payload.role in {"ADMIN", "RECEPTIONIST", "DOCTOR"}
+                    and last_tool_name == "list_patients"
+                    and isinstance(last_tool_result, list)
+                ):
+                    final_text = _format_patient_rows(last_tool_result)
+
                 metadata = {"tool_result": last_tool_result} if last_tool_result is not None else None
                 save_assistant_message(
                     session_id,

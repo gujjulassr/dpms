@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -25,7 +24,7 @@ class DoctorUpdate(BaseModel):
 
 
 class DoctorResponse(BaseModel):
-    doctor_id: UUID
+    doctor_id: int
     full_name: str
     specialization: str
     email: str

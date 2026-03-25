@@ -95,17 +95,17 @@ def main():
 
         if admin_s and upsert_user(
                 conn, "admin", "Admin@123", "ADMIN", admin_s["full_name"],
-                email=admin_s["email"], staff_id=str(admin_s["staff_id"])):
+                email=admin_s["email"], staff_id=admin_s["staff_id"]):
             created.append(("ADMIN", "admin", "Admin@123"))
 
         if recep1_s and upsert_user(
                 conn, "receptionist", "Recep@123", "RECEPTIONIST", recep1_s["full_name"],
-                email=recep1_s["email"], staff_id=str(recep1_s["staff_id"])):
+                email=recep1_s["email"], staff_id=recep1_s["staff_id"]):
             created.append(("RECEPTIONIST", "receptionist", "Recep@123"))
 
         if recep2_s and upsert_user(
                 conn, "receptionist2", "Recep@123", "RECEPTIONIST", recep2_s["full_name"],
-                email=recep2_s["email"], staff_id=str(recep2_s["staff_id"])):
+                email=recep2_s["email"], staff_id=recep2_s["staff_id"]):
             created.append(("RECEPTIONIST", "receptionist2", "Recep@123"))
 
         # ── Doctors ───────────────────────────────────────────────────
@@ -123,7 +123,7 @@ def main():
             doc = by_email(conn, "doctors", "doctor_id", email)
             if doc and upsert_user(
                     conn, uname, "Doctor@123", "DOCTOR", doc["full_name"],
-                    email=doc["email"], doctor_id=str(doc["doctor_id"])):
+                    email=doc["email"], doctor_id=doc["doctor_id"]):
                 created.append(("DOCTOR", uname, "Doctor@123"))
 
         # ── Patients (seed accounts for testing — real patients use Google) ──
@@ -140,7 +140,7 @@ def main():
             pat = by_email(conn, "patients", "patient_id", email)
             if pat and upsert_user(
                     conn, uname, "Patient@123", "PATIENT", pat["full_name"],
-                    email=pat["email"], patient_id=str(pat["patient_id"])):
+                    email=pat["email"], patient_id=pat["patient_id"]):
                 created.append(("PATIENT", uname, "Patient@123"))
 
     print(f"\n{'─'*52}")

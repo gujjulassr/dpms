@@ -1,7 +1,10 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.database.connection.database import get_db
 from app.modules.auth.schemas import LoginRequest, TokenResponse, UserCreate, UserInfo
@@ -125,4 +128,5 @@ def google_callback(
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
+        logger.exception("Google OAuth callback failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
